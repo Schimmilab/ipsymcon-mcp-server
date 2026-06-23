@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""MCP server for IP-Symcon.
+
+Lets an LLM/agent inspect and **develop** an IP-Symcon home-automation system over
+its JSON-RPC API — read the object tree, read/edit/create PHP scripts, read variables,
+and (when explicitly enabled) control devices and modify the running system.
+
+Safety model:
+    * Read tools are always available.
+    * Write/dev tools and the generic ``ips_call`` gateway require the environment
+      variable ``IPS_ENABLE_WRITE`` to be truthy. This is the deliberate guardrail
+      against an agent silently modifying a live home-automation system. Recommended:
+      enable only against a test/staging instance and keep a backup.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any, Optional, Union
+
+import httpx
+from pydantic import BaseModel, ConfigDict, Field
+
+from mcp.server.fastmcp import FastMCP
+
+from .client import IPSClient, IPSConfigError, IPSError
+
+# Load .env from the project root if present, so credentials are available when the
+# server is launched as an MCP subprocess regardless of the working directory.
+try:
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
+# Keep httpx's per-request INFO logging out of the server's stderr.
+import logging  # noqa: E402
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+mcp = FastMCP("ipsymcon_mcp")
+
+# --- Constants ---------------------------------------------------------------
+
+OBJECT_TYPES = {0: "Category", 1: "Instance", 2: "Variable", 3: "Script", 4: "Event", 5: "Media", 6: "Link"}
+VARIABLE_TYPES = {0: "Boolean", 1: "Integer", 2: "Float", 3: "String"}
+
+IPSValue = Union[bool, int, float, str]
+
+WRITE_DISABLED_MSG = (
+    "Error: Write/dev tools are disabled (safety default). Set IPS_ENABLE_WRITE=true in the "
+    "environment/.env to allow modifying the live IP-Symcon system. Recommendation: enable this "
+    "only against a test/staging instance and create a backup first."
+)
+
+# --- Shared helpers ----------------------------------------------------------
+
+
+def _write_enabled() -> bool:
+    return os.environ.get("IPS_ENABLE_WRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _client() -> IPSClient:
+    """Build a client from the current environment (raises IPSConfigError if unset)."""
+    return IPSClient()
+
+
+def _ts(value: Any) -> Any:
+    """Convert a unix timestamp to an ISO-8601 UTC string, leaving other values untouched."""
+    try:
+        if value:
+            return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+    except (ValueError, TypeError, OSError):
+        pass
+    return value
+
+
+def _handle_error(e: Exception) -> str:
+    """Map exceptions to clear, actionable error strings for the agent."""
+    if isinstance(e, IPSConfigError):
+        return f"Error: Configuration problem — {e}. Set IPS_URL (and IPS_USER/IPS_PASSWORD if required)."
+    if isinstance(e, IPSError):
+        return (
+            f"Error: IP-Symcon returned error {e.code}: {e.message}. "
+            "Check the object/variable ID and that the called function exists."
+        )
+    if isinstance(e, httpx.HTTPStatusError):
+        sc = e.response.status_code
+        if sc in (401, 403):
+            return (
+                "Error: Authentication failed (HTTP {0}). Check IPS_USER/IPS_PASSWORD and that the "
+                "JSON-RPC API access is enabled for that user in IP-Symcon.".format(sc)
+            )
+        return f"Error: IP-Symcon server returned HTTP {sc}."
+    if isinstance(e, httpx.ConnectError):
+        return (
+            "Error: Could not connect to IP-Symcon. Check IPS_URL host/port (default port 3777) "
+            "and that the server is reachable on the network."
+        )
+    if isinstance(e, httpx.TimeoutException):
+        return "Error: Request timed out — IP-Symcon did not respond in time."
+    return f"Error: Unexpected error: {type(e).__name__}: {e}"
+
+
+def _dumps(obj: Any) -> str:
+    return json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+
+
+# --- Input models ------------------------------------------------------------
+
+
+class _Base(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+
+class VarIdInput(_Base):
+    variable_id: int = Field(..., description="IP-Symcon variable object ID (e.g. 12345)", ge=1)
+
+
+class ObjIdInput(_Base):
+    object_id: int = Field(..., description="IP-Symcon object ID. Root of the tree is 0.", ge=0)
+
+
+class FindByNameInput(_Base):
+    name: str = Field(..., description="Exact object name to look up", min_length=1)
+    parent_id: int = Field(default=0, description="Parent object ID to search under (0 = root)", ge=0)
+
+
+class ScriptIdInput(_Base):
+    script_id: int = Field(..., description="IP-Symcon script object ID", ge=1)
+
+
+class SetValueInput(_Base):
+    variable_id: int = Field(..., description="Target variable object ID", ge=1)
+    value: IPSValue = Field(..., description="New value; type must match the variable (bool/int/float/string)")
+
+
+class RunScriptInput(_Base):
+    script_id: int = Field(..., description="Script object ID to execute", ge=1)
+
+
+class SetScriptContentInput(_Base):
+    script_id: int = Field(..., description="Script object ID whose PHP content to replace", ge=1)
+    content: str = Field(..., description="New full PHP source code (including <?php ... ?> if applicable)")
+
+
+class CreateScriptInput(_Base):
+    parent_id: int = Field(..., description="Parent object ID (category/root) to place the script under", ge=0)
+    name: str = Field(..., description="Name for the new script", min_length=1)
+    content: str = Field(default="", description="Initial PHP source code")
+
+
+class CallInput(_Base):
+    method: str = Field(..., description="IP-Symcon function name, e.g. 'IPS_CreateVariable'", min_length=1)
+    params: list[Any] = Field(default_factory=list, description="Positional parameter list for the function")
+
+
+# --- Read tools --------------------------------------------------------------
+
+
+@mcp.tool(
+    name="ips_get_value",
+    annotations={"title": "Get variable value", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_get_value(params: VarIdInput) -> str:
+    """Read the current value of an IP-Symcon variable (GetValue).
+
+    Returns a JSON object: {"variable_id": int, "value": bool|int|float|str}.
+    Use ips_get_variable for metadata (type, profile, last change).
+    """
+    try:
+        value = await _client().call("GetValue", [params.variable_id])
+        return _dumps({"variable_id": params.variable_id, "value": value})
+    except Exception as e:  # noqa: BLE001 — mapped to actionable message
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_get_variable",
+    annotations={"title": "Get variable metadata", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_get_variable(params: VarIdInput) -> str:
+    """Read full metadata + current value of a variable (IPS_GetVariable + GetValue + name).
+
+    Returns JSON: {variable_id, name, type, profile, value, has_action, updated, changed}.
+    'updated'/'changed' are ISO timestamps. 'type' is Boolean/Integer/Float/String.
+    """
+    try:
+        client = _client()
+        meta = await client.call("IPS_GetVariable", [params.variable_id])
+        value = await client.call("GetValue", [params.variable_id])
+        name = await client.call("IPS_GetName", [params.variable_id])
+        out = {
+            "variable_id": params.variable_id,
+            "name": name,
+            "type": VARIABLE_TYPES.get(meta.get("VariableType"), meta.get("VariableType")),
+            "profile": meta.get("VariableProfile") or meta.get("VariableCustomProfile") or None,
+            "value": value,
+            "has_action": bool(meta.get("VariableAction", 0)) or bool(meta.get("VariableCustomAction", 0)),
+            "updated": _ts(meta.get("VariableUpdated")),
+            "changed": _ts(meta.get("VariableChanged")),
+        }
+        return _dumps(out)
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_get_object",
+    annotations={"title": "Get object metadata", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_get_object(params: ObjIdInput) -> str:
+    """Read metadata of any object in the IP-Symcon tree (IPS_GetObject).
+
+    Returns the raw IPS object dict enriched with 'ObjectTypeName'
+    (Category/Instance/Variable/Script/Event/Media/Link). Includes ParentID and ChildrenIDs
+    so you can traverse the tree. Root object is ID 0.
+    """
+    try:
+        obj = await _client().call("IPS_GetObject", [params.object_id])
+        if isinstance(obj, dict):
+            obj = {**obj, "ObjectTypeName": OBJECT_TYPES.get(obj.get("ObjectType"), obj.get("ObjectType"))}
+        return _dumps(obj)
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_list_children",
+    annotations={"title": "List child objects", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_list_children(params: ObjIdInput) -> str:
+    """List the direct children of an object with id, name and type (browse the tree).
+
+    Call with object_id=0 to list the top level. Returns JSON:
+    {"parent_id": int, "count": int, "children": [{"id", "name", "type"}]}.
+    """
+    try:
+        client = _client()
+        child_ids = await client.call("IPS_GetChildrenIDs", [params.object_id])
+        children = []
+        for cid in child_ids or []:
+            obj = await client.call("IPS_GetObject", [cid])
+            children.append({
+                "id": cid,
+                "name": obj.get("ObjectName") if isinstance(obj, dict) else None,
+                "type": OBJECT_TYPES.get(obj.get("ObjectType"), obj.get("ObjectType")) if isinstance(obj, dict) else None,
+            })
+        return _dumps({"parent_id": params.object_id, "count": len(children), "children": children})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_find_object_by_name",
+    annotations={"title": "Find object by name", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_find_object_by_name(params: FindByNameInput) -> str:
+    """Resolve an object ID from its exact name under a given parent (IPS_GetObjectIDByName).
+
+    Returns JSON {"name", "parent_id", "object_id"}. Errors if no exact match exists —
+    use ips_list_children to browse if you only know part of the name.
+    """
+    try:
+        oid = await _client().call("IPS_GetObjectIDByName", [params.name, params.parent_id])
+        return _dumps({"name": params.name, "parent_id": params.parent_id, "object_id": oid})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_get_script_content",
+    annotations={"title": "Read script PHP source", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_get_script_content(params: ScriptIdInput) -> str:
+    """Read the PHP source code of a script object (IPS_GetScriptContent).
+
+    Returns JSON {"script_id": int, "content": str}. Use this before editing a script
+    with ips_set_script_content so you work from the current source.
+    """
+    try:
+        content = await _client().call("IPS_GetScriptContent", [params.script_id])
+        return _dumps({"script_id": params.script_id, "content": content})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+# --- Write / dev tools (gated by IPS_ENABLE_WRITE) ---------------------------
+
+
+@mcp.tool(
+    name="ips_set_value",
+    annotations={"title": "Set variable value", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_set_value(params: SetValueInput) -> str:
+    """Set a variable's value directly (SetValue). Requires IPS_ENABLE_WRITE.
+
+    Note: SetValue writes the variable without triggering its action. To actuate a device
+    that has an action attached, prefer ips_request_action. Returns JSON {variable_id, value, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        await _client().call("SetValue", [params.variable_id, params.value])
+        return _dumps({"variable_id": params.variable_id, "value": params.value, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_request_action",
+    annotations={"title": "Trigger variable action", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_request_action(params: SetValueInput) -> str:
+    """Actuate a device by requesting an action on its variable (RequestAction). Requires IPS_ENABLE_WRITE.
+
+    This is the correct way to control actuators (lights, switches): it runs the variable's
+    action handler instead of only writing the value. Returns JSON {variable_id, value, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        await _client().call("RequestAction", [params.variable_id, params.value])
+        return _dumps({"variable_id": params.variable_id, "value": params.value, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_run_script",
+    annotations={"title": "Run a script", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_run_script(params: RunScriptInput) -> str:
+    """Execute an IP-Symcon script (IPS_RunScript). Requires IPS_ENABLE_WRITE.
+
+    Side effects depend entirely on the script. Returns JSON {script_id, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        await _client().call("IPS_RunScript", [params.script_id])
+        return _dumps({"script_id": params.script_id, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_set_script_content",
+    annotations={"title": "Replace script PHP source", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_set_script_content(params: SetScriptContentInput) -> str:
+    """Replace the full PHP source of an existing script (IPS_SetScriptContent). Requires IPS_ENABLE_WRITE.
+
+    This overwrites the script entirely — read the current source first with ips_get_script_content.
+    Returns JSON {script_id, bytes_written, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        await _client().call("IPS_SetScriptContent", [params.script_id, params.content])
+        return _dumps({"script_id": params.script_id, "bytes_written": len(params.content), "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_create_script",
+    annotations={"title": "Create a new PHP script", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_create_script(params: CreateScriptInput) -> str:
+    """Create a new PHP script, place it under a parent, name it and set its content. Requires IPS_ENABLE_WRITE.
+
+    Performs IPS_CreateScript(0) → IPS_SetParent → IPS_SetName → IPS_SetScriptContent.
+    Returns JSON {script_id, name, parent_id, ok} with the new script's ID.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        client = _client()
+        new_id = await client.call("IPS_CreateScript", [0])  # 0 = PHP script
+        await client.call("IPS_SetParent", [new_id, params.parent_id])
+        await client.call("IPS_SetName", [new_id, params.name])
+        if params.content:
+            await client.call("IPS_SetScriptContent", [new_id, params.content])
+        return _dumps({"script_id": new_id, "name": params.name, "parent_id": params.parent_id, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_call",
+    annotations={"title": "Call any IP-Symcon function", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_call(params: CallInput) -> str:
+    """Generic gateway: call any IP-Symcon JSON-RPC function by name. Requires IPS_ENABLE_WRITE.
+
+    Use this for full API coverage when no dedicated tool exists — e.g. IPS_CreateVariable,
+    IPS_CreateEvent, IPS_CreateInstance, IPS_SetEventActive. Params is the positional argument
+    list for the function. Returns JSON {method, result}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        result = await _client().call(params.method, params.params)
+        return _dumps({"method": params.method, "result": result})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+def main() -> None:
+    """Entry point — runs the server over stdio."""
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
