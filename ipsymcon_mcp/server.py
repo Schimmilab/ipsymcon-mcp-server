@@ -210,6 +210,11 @@ class GetObjectTreeInput(_Base):
     max_depth: int = Field(default=3, description="How many levels deep to descend", ge=1, le=20)
 
 
+class ExportSubtreeInput(_Base):
+    root_id: int = Field(..., description="Root object ID of the subtree to export", ge=0)
+    max_depth: int = Field(default=25, description="How many levels deep to export", ge=1, le=50)
+
+
 # --- Read tools --------------------------------------------------------------
 
 
@@ -454,6 +459,60 @@ async def ips_get_object_tree(params: GetObjectTreeInput) -> str:
     """
     try:
         tree = await _build_subtree(_client(), params.root_id, 0, params.max_depth)
+        return _dumps(tree)
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+async def _export_node(client: IPSClient, oid: int, depth: int, max_depth: int) -> dict[str, Any]:
+    """Recursively serialize a node with the type-specific detail needed to recreate it."""
+    obj = await client.call("IPS_GetObject", [oid])
+    obj = obj if isinstance(obj, dict) else {}
+    otype = obj.get("ObjectType")
+    node: dict[str, Any] = {"id": oid, "name": obj.get("ObjectName"), "type": OBJECT_TYPES.get(otype, otype)}
+    if otype == 2:  # Variable
+        meta = await client.call("IPS_GetVariable", [oid])
+        meta = meta if isinstance(meta, dict) else {}
+        node["variable_type"] = VARIABLE_TYPES.get(meta.get("VariableType"), meta.get("VariableType"))
+        node["profile"] = meta.get("VariableProfile") or meta.get("VariableCustomProfile") or None
+        node["value"] = await client.call("GetValue", [oid])
+    elif otype == 3:  # Script
+        node["content"] = await client.call("IPS_GetScriptContent", [oid])
+    elif otype == 4:  # Event
+        node["event"] = await client.call("IPS_GetEvent", [oid])
+    elif otype == 1:  # Instance
+        inst = await client.call("IPS_GetInstance", [oid])
+        inst = inst if isinstance(inst, dict) else {}
+        node["module_id"] = (inst.get("ModuleInfo") or {}).get("ModuleID")
+        node["configuration"] = await client.call("IPS_GetConfiguration", [oid])
+    elif otype == 6:  # Link
+        link = await client.call("IPS_GetLink", [oid])
+        link = link if isinstance(link, dict) else {}
+        node["target_id"] = link.get("TargetID")
+    if depth < max_depth:
+        child_ids = await client.call("IPS_GetChildrenIDs", [oid])
+        children = [await _export_node(client, cid, depth + 1, max_depth) for cid in (child_ids or [])]
+        if children:
+            node["children"] = children
+    return node
+
+
+@mcp.tool(
+    name="ips_export_subtree",
+    annotations={"title": "Export a subtree for backup/restore", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_export_subtree(params: ExportSubtreeInput) -> str:
+    """Serialize a whole subtree to rich JSON for backup or migration (read-only).
+
+    Like ips_get_object_tree but carries the detail needed to recreate each node:
+    variables (type, profile, value), scripts (content), events (IPS_GetEvent), instances
+    (module_id + configuration) and links (target_id). The restore/adaptation side
+    (recreating objects + remapping IDs to a target system) is an agentic workflow, not part
+    of this read-only export. Returns the nested JSON rooted at root_id.
+    """
+    try:
+        tree = await _export_node(_client(), params.root_id, 0, params.max_depth)
         return _dumps(tree)
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)

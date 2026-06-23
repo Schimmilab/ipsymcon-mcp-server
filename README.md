@@ -79,6 +79,7 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 | `ips_get_object_tree` | IPS_GetObject/-GetChildrenIDs (rekursiv) | ganzen Teilbaum auf einmal als verschachteltes `{id,name,type,children}` (max_depth) |
 | `ips_snapshot_variables` | GetValue (n×) | Werte mehrerer Variablen als Snapshot festhalten |
 | `ips_diff_variables` | GetValue (n×) | Snapshot gegen Live-Werte diffen → was hat sich geändert (Wirkungskontrolle) |
+| `ips_export_subtree` | IPS_GetObject/-Variable/-ScriptContent/-Event/-Instance/-Link | Teilbaum → reiches JSON für **Backup/Migration** (Variable Typ+Profil+Wert, Skript-Content, Event/Instanz/Link-Detail) |
 | `ips_get_script_content` | IPS_GetScriptContent | PHP-Quelltext eines Skripts lesen |
 
 **Schreiben/Entwickeln (nur mit `IPS_ENABLE_WRITE=true`):**
@@ -108,5 +109,7 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 - [x] Dedizierte Tools: `ips_create_variable`, `ips_create_event`, `ips_create_category` (v0.2 — TDD + Live-Test). Detail-Config (Trigger/Cyclic/Schedule) via `ips_call`.
 - [ ] **Dry-Run-Modus** + automatisches **Snapshot-Backup** vor Schreibzugriffen
 - [x] **Beobachtungs-/Navigations-Tools** (v0.3, aus dem Community-Vergleich): `ips_get_object_tree` (ganzer Teilbaum), `ips_get_variable_by_path` (Pfad statt ID), `ips_snapshot_variables` + `ips_diff_variables` (Wirkungskontrolle build→run→diff). TDD + Live-Test.
+- [x] **`ips_export_subtree`** — Backup-Hälfte: Teilbaum → reiches JSON (Variable Typ+Profil+Wert, Skript-Content, Event/Instanz/Link-Detail). Deterministisch, read-only. TDD + Live-Test.
+- [ ] **`ips_import_subtree` + Migrations-Skill** — Restore-/Migrations-Hälfte: Objekte mechanisch anlegen (MCP, gibt alte→neue ID-Map zurück) + **agentische Adaption** (semantisches Matching, Referenz-Umschreiben in Events/Skripten/Links/Instanz-Configs) als Skill. Hängt an Multi-Instanz-Support.
 - [ ] Evaluations (mcp-builder Phase 4)
 - [ ] Gegenstück: Home-Assistant Dev-MCP (zweite Backend-Schicht des Fusionsprojekts)
