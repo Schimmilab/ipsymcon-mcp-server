@@ -1,5 +1,7 @@
 # ipsymcon-mcp-server
 
+[![CI](https://github.com/Schimmilab/ipsymcon-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/Schimmilab/ipsymcon-mcp-server/actions/workflows/ci.yml)
+
 MCP-Server für **IP-Symcon** — lässt Claude/Agenten eine IP-Symcon-Hausautomation nicht nur
 abfragen und steuern, sondern **entwickeln**: Objektbaum lesen, PHP-Skripte lesen/ändern/anlegen,
 Variablen lesen, Geräte schalten. Über die IP-Symcon JSON-RPC-API.
@@ -84,7 +86,10 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 | `ips_run_script_capture` | IPS_RunScriptWaitEx | Skript ausführen **und die Ausgabe zurückgeben** — Basis fürs agentische bauen→ausführen→prüfen→nachbessern. Optionale `parameters` landen im Skript als `$_IPS['key']`. |
 | `ips_set_script_content` | IPS_SetScriptContent | PHP-Quelltext überschreiben |
 | `ips_create_script` | IPS_CreateScript (+Parent/Name/Content) | neues PHP-Skript anlegen |
-| `ips_call` | beliebig | Generischer Gateway für volle API-Abdeckung (z. B. IPS_CreateVariable/-Event/-Instance) |
+| `ips_create_category` | IPS_CreateCategory | Kategorie anlegen (Objektbaum strukturieren) |
+| `ips_create_variable` | IPS_CreateVariable (+Profil) | typisierte Variable anlegen (`boolean`/`integer`/`float`/`string`, optional Profil) |
+| `ips_create_event` | IPS_CreateEvent | Event-Hülle anlegen (`triggered`/`cyclic`/`weekly`); Detail-Config via `ips_call` |
+| `ips_call` | beliebig | Generischer Gateway für volle API-Abdeckung (z. B. IPS_CreateInstance, IPS_SetEventCyclic) |
 
 > **Hinweis zu `ips_run_script_capture`:** IP-Symcon erfasst die **Ausgabe** des Skripts (was es `echo`/`print`t) — ein top-level PHP-`return` wird **nicht** zurückgegeben (kommt leer). Das Skript muss sein Ergebnis also `echo`en.
 
@@ -96,7 +101,7 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 - [x] **`ips_run_script_capture`** (v0.2) — Skript via `IPS_RunScriptWaitEx` ausführen und die **Ausgabe** zurückgeben (`echo`, nicht `return` — siehe Hinweis oben). Grundlage für agentisches Entwickeln (bauen → ausführen → Ergebnis prüfen → nachbessern). Optionale `$_IPS`-Parameter. Unit-Tests + Live-Test grün.
 - [ ] **`ips_read_log`** — Log-Abruf über das Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge): ein residenter **MessageSink** mit gefiltertem **Ring-Buffer** (`KL_ERROR`/`KL_WARNING`/…), der die öffentliche Funktion `MCPB_GetLog($id, level, count, filter)` per JSON-RPC bereitstellt. `ips_read_log` ruft dann nur diese Funktion (kein Inline-PHP, kein Logfile-Parsen). Hintergrund: IP-Symcon hat kein direktes „getMessages" (Meldungsfenster = Live-Abo); `IPS_GetLogDir()` gäbe nur die rohe Logdatei.
 - [x] **Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge)** (MIT, released) — IP-Symcon-seitiges Modul, das Kernel-Log-Meldungen als gefilterten Ring-Buffer über JSON-RPC bereitstellt. Basis für `ips_read_log` und tiefere Bridge-/Helper-Funktionen. Installation via Module Control (Git-Repo).
-- [ ] Dedizierte Tools: `ips_create_variable`, `ips_create_event`, `ips_create_category`
+- [x] Dedizierte Tools: `ips_create_variable`, `ips_create_event`, `ips_create_category` (v0.2 — TDD + Live-Test). Detail-Config (Trigger/Cyclic/Schedule) via `ips_call`.
 - [ ] **Dry-Run-Modus** + automatisches **Snapshot-Backup** vor Schreibzugriffen
 - [ ] Objektbaum-Snapshot-Tool (kuratierte Gesamtübersicht)
 - [ ] Evaluations (mcp-builder Phase 4)

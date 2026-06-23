@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -48,6 +48,8 @@ mcp = FastMCP("ipsymcon_mcp")
 
 OBJECT_TYPES = {0: "Category", 1: "Instance", 2: "Variable", 3: "Script", 4: "Event", 5: "Media", 6: "Link"}
 VARIABLE_TYPES = {0: "Boolean", 1: "Integer", 2: "Float", 3: "String"}
+VAR_TYPE_TO_INT = {"boolean": 0, "integer": 1, "float": 2, "string": 3}
+EVENT_TYPE_TO_INT = {"triggered": 0, "cyclic": 1, "weekly": 2}
 
 IPSValue = bool | int | float | str
 
@@ -160,6 +162,27 @@ class CreateScriptInput(_Base):
     parent_id: int = Field(..., description="Parent object ID (category/root) to place the script under", ge=0)
     name: str = Field(..., description="Name for the new script", min_length=1)
     content: str = Field(default="", description="Initial PHP source code")
+
+
+class CreateCategoryInput(_Base):
+    parent_id: int = Field(..., description="Parent object ID (category/root) to place the category under", ge=0)
+    name: str = Field(..., description="Name for the new category", min_length=1)
+
+
+class CreateVariableInput(_Base):
+    parent_id: int = Field(..., description="Parent object ID to place the variable under", ge=0)
+    name: str = Field(..., description="Name for the new variable", min_length=1)
+    variable_type: Literal["boolean", "integer", "float", "string"] = Field(
+        ..., description="Variable data type")
+    profile: str = Field(default="", description="Optional variable profile to attach, e.g. '~Temperature'")
+
+
+class CreateEventInput(_Base):
+    parent_id: int = Field(..., description="Parent object ID to place the event under", ge=0)
+    name: str = Field(..., description="Name for the new event", min_length=1)
+    event_type: Literal["triggered", "cyclic", "weekly"] = Field(
+        ..., description="Event type: triggered (on a variable change), cyclic (interval), or weekly (schedule)")
+    active: bool = Field(default=False, description="Whether the event is active right after creation")
 
 
 class CallInput(_Base):
@@ -433,6 +456,87 @@ async def ips_create_script(params: CreateScriptInput) -> str:
         if params.content:
             await client.call("IPS_SetScriptContent", [new_id, params.content])
         return _dumps({"script_id": new_id, "name": params.name, "parent_id": params.parent_id, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_create_category",
+    annotations={"title": "Create a category", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_create_category(params: CreateCategoryInput) -> str:
+    """Create a category to structure the object tree (IPS_CreateCategory). Requires IPS_ENABLE_WRITE.
+
+    Performs IPS_CreateCategory → IPS_SetParent → IPS_SetName.
+    Returns JSON {category_id, name, parent_id, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        client = _client()
+        new_id = await client.call("IPS_CreateCategory", [])
+        await client.call("IPS_SetParent", [new_id, params.parent_id])
+        await client.call("IPS_SetName", [new_id, params.name])
+        return _dumps({"category_id": new_id, "name": params.name, "parent_id": params.parent_id, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_create_variable",
+    annotations={"title": "Create a variable", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_create_variable(params: CreateVariableInput) -> str:
+    """Create a typed variable (IPS_CreateVariable). Requires IPS_ENABLE_WRITE.
+
+    Performs IPS_CreateVariable(type) → IPS_SetParent → IPS_SetName, and attaches a profile
+    via IPS_SetVariableCustomProfile when 'profile' is given. 'variable_type' is one of
+    boolean/integer/float/string. Returns JSON {variable_id, name, parent_id, type, profile, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        client = _client()
+        new_id = await client.call("IPS_CreateVariable", [VAR_TYPE_TO_INT[params.variable_type]])
+        await client.call("IPS_SetParent", [new_id, params.parent_id])
+        await client.call("IPS_SetName", [new_id, params.name])
+        if params.profile:
+            await client.call("IPS_SetVariableCustomProfile", [new_id, params.profile])
+        return _dumps({
+            "variable_id": new_id, "name": params.name, "parent_id": params.parent_id,
+            "type": params.variable_type, "profile": params.profile or None, "ok": True,
+        })
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_create_event",
+    annotations={"title": "Create an event", "readOnlyHint": False, "destructiveHint": True,
+                 "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_create_event(params: CreateEventInput) -> str:
+    """Create an event shell (IPS_CreateEvent). Requires IPS_ENABLE_WRITE.
+
+    Performs IPS_CreateEvent(type) → IPS_SetParent → IPS_SetName → IPS_SetEventActive.
+    'event_type' is triggered/cyclic/weekly. The detailed trigger/cyclic/schedule config is
+    set afterwards via ips_call (e.g. IPS_SetEventCyclic, IPS_SetEventTrigger). Returns JSON
+    {event_id, name, parent_id, type, active, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        client = _client()
+        new_id = await client.call("IPS_CreateEvent", [EVENT_TYPE_TO_INT[params.event_type]])
+        await client.call("IPS_SetParent", [new_id, params.parent_id])
+        await client.call("IPS_SetName", [new_id, params.name])
+        await client.call("IPS_SetEventActive", [new_id, params.active])
+        return _dumps({
+            "event_id": new_id, "name": params.name, "parent_id": params.parent_id,
+            "type": params.event_type, "active": params.active, "ok": True,
+        })
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
 
