@@ -9,7 +9,7 @@ HTTP Basic Auth using a user configured in the IP-Symcon user management.
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -44,9 +44,9 @@ class IPSClient:
 
     def __init__(
         self,
-        url: Optional[str] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
+        url: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         url = url if url is not None else os.environ.get("IPS_URL", "")
@@ -62,12 +62,12 @@ class IPSClient:
         self._id = 0
 
     @property
-    def _auth(self) -> Optional[tuple[str, str]]:
+    def _auth(self) -> tuple[str, str] | None:
         if self.user or self.password:
             return (self.user, self.password)
         return None
 
-    async def call(self, method: str, params: Optional[list[Any]] = None) -> Any:
+    async def call(self, method: str, params: list[Any] | None = None) -> Any:
         """Call an arbitrary IP-Symcon function and return its result.
 
         Args:

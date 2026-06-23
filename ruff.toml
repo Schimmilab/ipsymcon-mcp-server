@@ -1,0 +1,9 @@
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = ["B008"]  # FastMCP/Pydantic use callables in defaults (Field(...))
+
+[lint.per-file-ignores]
+"tests/*" = ["E501"]

@@ -17,13 +17,12 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
-from typing import Any, Optional, Union
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
-
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, ConfigDict, Field
 
 from .client import IPSClient, IPSConfigError, IPSError
 
@@ -50,7 +49,7 @@ mcp = FastMCP("ipsymcon_mcp")
 OBJECT_TYPES = {0: "Category", 1: "Instance", 2: "Variable", 3: "Script", 4: "Event", 5: "Media", 6: "Link"}
 VARIABLE_TYPES = {0: "Boolean", 1: "Integer", 2: "Float", 3: "String"}
 
-IPSValue = Union[bool, int, float, str]
+IPSValue = bool | int | float | str
 
 WRITE_DISABLED_MSG = (
     "Error: Write/dev tools are disabled (safety default). Set IPS_ENABLE_WRITE=true in the "
@@ -74,7 +73,7 @@ def _ts(value: Any) -> Any:
     """Convert a unix timestamp to an ISO-8601 UTC string, leaving other values untouched."""
     try:
         if value:
-            return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(int(value), tz=UTC).isoformat()
     except (ValueError, TypeError, OSError):
         pass
     return value
@@ -93,8 +92,8 @@ def _handle_error(e: Exception) -> str:
         sc = e.response.status_code
         if sc in (401, 403):
             return (
-                "Error: Authentication failed (HTTP {0}). Check IPS_USER/IPS_PASSWORD and that the "
-                "JSON-RPC API access is enabled for that user in IP-Symcon.".format(sc)
+                f"Error: Authentication failed (HTTP {sc}). Check IPS_USER/IPS_PASSWORD and that the "
+                "JSON-RPC API access is enabled for that user in IP-Symcon."
             )
         return f"Error: IP-Symcon server returned HTTP {sc}."
     if isinstance(e, httpx.ConnectError):
@@ -258,10 +257,11 @@ async def ips_list_children(params: ObjIdInput) -> str:
         children = []
         for cid in child_ids or []:
             obj = await client.call("IPS_GetObject", [cid])
+            obj = obj if isinstance(obj, dict) else {}
             children.append({
                 "id": cid,
-                "name": obj.get("ObjectName") if isinstance(obj, dict) else None,
-                "type": OBJECT_TYPES.get(obj.get("ObjectType"), obj.get("ObjectType")) if isinstance(obj, dict) else None,
+                "name": obj.get("ObjectName"),
+                "type": OBJECT_TYPES.get(obj.get("ObjectType"), obj.get("ObjectType")),
             })
         return _dumps({"parent_id": params.object_id, "count": len(children), "children": children})
     except Exception as e:  # noqa: BLE001
