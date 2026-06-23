@@ -75,6 +75,10 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 | `ips_get_object` | IPS_GetObject | Objekt-Metadaten + Parent/Children (Tree-Navigation) |
 | `ips_list_children` | IPS_GetChildrenIDs | direkte Kinder mit id/name/typ (Baum durchblättern, Start: 0) |
 | `ips_find_object_by_name` | IPS_GetObjectIDByName | Objekt-ID per exaktem Namen finden |
+| `ips_get_variable_by_path` | IPS_GetObjectIDByName (Pfad-Walk) | Variablenwert per Objektpfad lesen (`Räume/Büro/Zustand`) statt per ID |
+| `ips_get_object_tree` | IPS_GetObject/-GetChildrenIDs (rekursiv) | ganzen Teilbaum auf einmal als verschachteltes `{id,name,type,children}` (max_depth) |
+| `ips_snapshot_variables` | GetValue (n×) | Werte mehrerer Variablen als Snapshot festhalten |
+| `ips_diff_variables` | GetValue (n×) | Snapshot gegen Live-Werte diffen → was hat sich geändert (Wirkungskontrolle) |
 | `ips_get_script_content` | IPS_GetScriptContent | PHP-Quelltext eines Skripts lesen |
 
 **Schreiben/Entwickeln (nur mit `IPS_ENABLE_WRITE=true`):**
@@ -103,6 +107,6 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 - [x] **Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge)** (MIT, released) — IP-Symcon-seitiges Modul, das Kernel-Log-Meldungen als gefilterten Ring-Buffer über JSON-RPC bereitstellt. Basis für `ips_read_log` und tiefere Bridge-/Helper-Funktionen. Installation via Module Control (Git-Repo).
 - [x] Dedizierte Tools: `ips_create_variable`, `ips_create_event`, `ips_create_category` (v0.2 — TDD + Live-Test). Detail-Config (Trigger/Cyclic/Schedule) via `ips_call`.
 - [ ] **Dry-Run-Modus** + automatisches **Snapshot-Backup** vor Schreibzugriffen
-- [ ] Objektbaum-Snapshot-Tool (kuratierte Gesamtübersicht)
+- [x] **Beobachtungs-/Navigations-Tools** (v0.3, aus dem Community-Vergleich): `ips_get_object_tree` (ganzer Teilbaum), `ips_get_variable_by_path` (Pfad statt ID), `ips_snapshot_variables` + `ips_diff_variables` (Wirkungskontrolle build→run→diff). TDD + Live-Test.
 - [ ] Evaluations (mcp-builder Phase 4)
 - [ ] Gegenstück: Home-Assistant Dev-MCP (zweite Backend-Schicht des Fusionsprojekts)

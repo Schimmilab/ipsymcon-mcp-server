@@ -190,6 +190,26 @@ class CallInput(_Base):
     params: list[Any] = Field(default_factory=list, description="Positional parameter list for the function")
 
 
+class GetVariableByPathInput(_Base):
+    path: str = Field(..., description="Object path from the base, e.g. 'Räume/Büro/Zustand'", min_length=1)
+    base_id: int = Field(default=0, description="Object ID the path is relative to (0 = root)", ge=0)
+    separator: str = Field(default="/", description="Path separator", min_length=1)
+
+
+class SnapshotVariablesInput(_Base):
+    variable_ids: list[int] = Field(..., description="Variable object IDs to snapshot", min_length=1)
+
+
+class DiffVariablesInput(_Base):
+    before: dict[str, IPSValue] = Field(
+        ..., description="A previous snapshot's 'variables' map (id -> value) to diff against the live values")
+
+
+class GetObjectTreeInput(_Base):
+    root_id: int = Field(default=0, description="Root object ID to start from (0 = tree root)", ge=0)
+    max_depth: int = Field(default=3, description="How many levels deep to descend", ge=1, le=20)
+
+
 # --- Read tools --------------------------------------------------------------
 
 
@@ -323,6 +343,118 @@ async def ips_get_script_content(params: ScriptIdInput) -> str:
     try:
         content = await _client().call("IPS_GetScriptContent", [params.script_id])
         return _dumps({"script_id": params.script_id, "content": content})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+# --- Navigation / observation tools (read-only) ------------------------------
+
+
+async def _resolve_path(client: IPSClient, path: str, base_id: int, separator: str) -> int:
+    """Resolve an object path (names separated by `separator`) to an object ID."""
+    current = base_id
+    for segment in (s for s in path.split(separator) if s):
+        current = await client.call("IPS_GetObjectIDByName", [segment, current])
+    return current
+
+
+@mcp.tool(
+    name="ips_get_variable_by_path",
+    annotations={"title": "Get variable value by path", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_get_variable_by_path(params: GetVariableByPathInput) -> str:
+    """Read a variable's value by its object path instead of its ID (GetValue).
+
+    Walks the tree via IPS_GetObjectIDByName for each path segment, then reads the value.
+    Example path: 'Räume/Büro/Zustand'. Returns JSON {path, variable_id, value}.
+    """
+    try:
+        client = _client()
+        oid = await _resolve_path(client, params.path, params.base_id, params.separator)
+        value = await client.call("GetValue", [oid])
+        return _dumps({"path": params.path, "variable_id": oid, "value": value})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_snapshot_variables",
+    annotations={"title": "Snapshot variable values", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_snapshot_variables(params: SnapshotVariablesInput) -> str:
+    """Capture the current values of a set of variables (GetValue per id).
+
+    Returns JSON {"variables": {id: value}, "count": int}. Keep the returned snapshot and
+    pass its 'variables' map to ips_diff_variables after a change to see what moved.
+    """
+    try:
+        client = _client()
+        snapshot = {}
+        for vid in params.variable_ids:
+            snapshot[str(vid)] = await client.call("GetValue", [vid])
+        return _dumps({"variables": snapshot, "count": len(snapshot)})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_diff_variables",
+    annotations={"title": "Diff variables against a snapshot", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_diff_variables(params: DiffVariablesInput) -> str:
+    """Compare a previous snapshot against the live values (GetValue per id).
+
+    'before' is a snapshot's 'variables' map (id -> value). Returns JSON
+    {"changed": {id: {before, after}}, "changed_count": int, "unchanged_count": int} —
+    the build → run → see-what-changed loop for agentic development.
+    """
+    try:
+        client = _client()
+        changed = {}
+        unchanged = 0
+        for id_str, before_val in params.before.items():
+            after_val = await client.call("GetValue", [int(id_str)])
+            if after_val != before_val:
+                changed[id_str] = {"before": before_val, "after": after_val}
+            else:
+                unchanged += 1
+        return _dumps({"changed": changed, "changed_count": len(changed), "unchanged_count": unchanged})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+async def _build_subtree(client: IPSClient, oid: int, depth: int, max_depth: int) -> dict[str, Any]:
+    """Recursively build a {id, name, type, children?} node up to max_depth."""
+    obj = await client.call("IPS_GetObject", [oid])
+    obj = obj if isinstance(obj, dict) else {}
+    node = {"id": oid, "name": obj.get("ObjectName"),
+            "type": OBJECT_TYPES.get(obj.get("ObjectType"), obj.get("ObjectType"))}
+    if depth < max_depth:
+        child_ids = await client.call("IPS_GetChildrenIDs", [oid])
+        children = [await _build_subtree(client, cid, depth + 1, max_depth) for cid in (child_ids or [])]
+        if children:
+            node["children"] = children
+    return node
+
+
+@mcp.tool(
+    name="ips_get_object_tree",
+    annotations={"title": "Get a nested object subtree", "readOnlyHint": True, "destructiveHint": False,
+                 "idempotentHint": True, "openWorldHint": True},
+)
+async def ips_get_object_tree(params: GetObjectTreeInput) -> str:
+    """Fetch a whole subtree at once as nested {id, name, type, children} (up to max_depth).
+
+    Far fewer round-trips than walking ips_list_children level by level. Mind the depth on
+    large installations — each node costs an IPS_GetObject + IPS_GetChildrenIDs call.
+    Returns the nested tree JSON rooted at root_id.
+    """
+    try:
+        tree = await _build_subtree(_client(), params.root_id, 0, params.max_depth)
+        return _dumps(tree)
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
 
