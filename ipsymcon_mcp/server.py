@@ -144,6 +144,14 @@ class RunScriptInput(_Base):
     script_id: int = Field(..., description="Script object ID to execute", ge=1)
 
 
+class RunScriptCaptureInput(_Base):
+    script_id: int = Field(..., description="Script object ID to execute", ge=1)
+    parameters: dict[str, str] = Field(
+        default_factory=dict,
+        description="Optional named parameters passed to the script (available there as $_IPS['key'])",
+    )
+
+
 class SetScriptContentInput(_Base):
     script_id: int = Field(..., description="Script object ID whose PHP content to replace", ge=1)
     content: str = Field(..., description="New full PHP source code (including <?php ... ?> if applicable)")
@@ -354,6 +362,32 @@ async def ips_run_script(params: RunScriptInput) -> str:
     try:
         await _client().call("IPS_RunScript", [params.script_id])
         return _dumps({"script_id": params.script_id, "ok": True})
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="ips_run_script_capture",
+    annotations={"title": "Run a script and capture its return value", "readOnlyHint": False,
+                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_run_script_capture(params: RunScriptCaptureInput) -> str:
+    """Execute a script and capture its output (IPS_RunScriptWaitEx). Requires IPS_ENABLE_WRITE.
+
+    Unlike ips_run_script (fire-and-confirm), this returns what the script produces — the
+    basis for agentic development: build → run → inspect output → fix.
+
+    IMPORTANT: IP-Symcon captures the script's OUTPUT, i.e. what it ``echo``/``print``s —
+    a top-level PHP ``return`` is NOT captured (it comes back empty). So have the script
+    ``echo`` its result. Optional 'parameters' are passed to the script and are available
+    there as $_IPS['key']. Side effects depend entirely on the script.
+    Returns JSON {script_id, output, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        output = await _client().call("IPS_RunScriptWaitEx", [params.script_id, params.parameters])
+        return _dumps({"script_id": params.script_id, "output": output, "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
 

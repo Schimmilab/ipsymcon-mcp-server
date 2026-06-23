@@ -80,17 +80,20 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 |---|---|---|
 | `ips_set_value` | SetValue | Variablenwert direkt setzen |
 | `ips_request_action` | RequestAction | Aktor schalten (löst Action aus) |
-| `ips_run_script` | IPS_RunScript | Skript ausführen |
+| `ips_run_script` | IPS_RunScript | Skript ausführen (fire-and-confirm, ohne Ausgabe) |
+| `ips_run_script_capture` | IPS_RunScriptWaitEx | Skript ausführen **und die Ausgabe zurückgeben** — Basis fürs agentische bauen→ausführen→prüfen→nachbessern. Optionale `parameters` landen im Skript als `$_IPS['key']`. |
 | `ips_set_script_content` | IPS_SetScriptContent | PHP-Quelltext überschreiben |
 | `ips_create_script` | IPS_CreateScript (+Parent/Name/Content) | neues PHP-Skript anlegen |
 | `ips_call` | beliebig | Generischer Gateway für volle API-Abdeckung (z. B. IPS_CreateVariable/-Event/-Instance) |
+
+> **Hinweis zu `ips_run_script_capture`:** IP-Symcon erfasst die **Ausgabe** des Skripts (was es `echo`/`print`t) — ein top-level PHP-`return` wird **nicht** zurückgegeben (kommt leer). Das Skript muss sein Ergebnis also `echo`en.
 
 ---
 
 ## Roadmap
 
 - [ ] **Multi-Instanz-Support** — mehrere IP-Symcon-Ziele gleichzeitig ansprechen über **benannte Verbindungen** (z.B. `home` = aktuelle Instanz, `linux` = Migrationsziel). Jedes Tool bekommt einen optionalen `instance`-Parameter (Default = konfigurierte Standard-Instanz); Config als benannte Map (URL/User/Passwort je Instanz), **abwärtskompatibel** zum einzelnen `IPS_URL`. **Direkter Treiber: eine IPS-Migration auf Linux** — der Agent kann dann aus Alt- und Neu-Instanz lesen, Objekte/Skripte/Events **vergleichen und migrieren** und das Ergebnis verifizieren, statt blind auf einer Instanz zu arbeiten.
-- [ ] **`ips_run_script_capture`** — Skript via `IPS_RunScriptWaitEx` ausführen und den `return`-Wert/Output zurückgeben (heute ist `ips_run_script` nur fire-and-confirm). Grundlage für agentisches Entwickeln (bauen → ausführen → Ergebnis prüfen → nachbessern) und fürs Log-Lesen.
+- [x] **`ips_run_script_capture`** (v0.2) — Skript via `IPS_RunScriptWaitEx` ausführen und die **Ausgabe** zurückgeben (`echo`, nicht `return` — siehe Hinweis oben). Grundlage für agentisches Entwickeln (bauen → ausführen → Ergebnis prüfen → nachbessern). Optionale `$_IPS`-Parameter. Unit-Tests + Live-Test grün.
 - [ ] **`ips_read_log`** — Log-Abruf über das Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge): ein residenter **MessageSink** mit gefiltertem **Ring-Buffer** (`KL_ERROR`/`KL_WARNING`/…), der die öffentliche Funktion `MCPB_GetLog($id, level, count, filter)` per JSON-RPC bereitstellt. `ips_read_log` ruft dann nur diese Funktion (kein Inline-PHP, kein Logfile-Parsen). Hintergrund: IP-Symcon hat kein direktes „getMessages" (Meldungsfenster = Live-Abo); `IPS_GetLogDir()` gäbe nur die rohe Logdatei.
 - [x] **Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge)** (MIT, released) — IP-Symcon-seitiges Modul, das Kernel-Log-Meldungen als gefilterten Ring-Buffer über JSON-RPC bereitstellt. Basis für `ips_read_log` und tiefere Bridge-/Helper-Funktionen. Installation via Module Control (Git-Repo).
 - [ ] Dedizierte Tools: `ips_create_variable`, `ips_create_event`, `ips_create_category`
