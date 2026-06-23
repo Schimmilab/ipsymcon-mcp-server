@@ -100,6 +100,18 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 
 ---
 
+## Skill (Playbook für Claude Code)
+
+Mitgeliefert in [`skills/ipsymcon/`](skills/ipsymcon/) — das Domänen-Können auf den Tools: **Plan-First-Sicherheitsworkflow** (read → plan → approve → execute → report), Tool-Übersicht, IPS-Objektmodell. Aufgeteilt nach dem Prinzip *Anweisung im Skill, Workflow separat*:
+
+- [`SKILL.md`](skills/ipsymcon/SKILL.md) — die Direktive: die eine Regel (vor Schreibzugriff planen), die 21 Tools, Struktur-Primer.
+- [`references/workflow.md`](skills/ipsymcon/references/workflow.md) — die detaillierten Workflows + Plan-/Report-Templates + Fallstricke.
+- [`references/ips-functions.md`](skills/ipsymcon/references/ips-functions.md) — `ips_call`-Funktions-Cheat-Sheet (Event-Trigger, Profile, Instanzen).
+
+Claude Code: nach `~/.claude/skills/ipsymcon/` kopieren oder dorthin symlinken. So wachsen Tools (MCP) und Playbook (Skill) im selben Repo/Release im Gleichschritt.
+
+---
+
 ## Roadmap
 
 - [ ] **Multi-Instanz-Support** — mehrere IP-Symcon-Ziele gleichzeitig ansprechen über **benannte Verbindungen** (z.B. `home` = aktuelle Instanz, `linux` = Migrationsziel). Jedes Tool bekommt einen optionalen `instance`-Parameter (Default = konfigurierte Standard-Instanz); Config als benannte Map (URL/User/Passwort je Instanz), **abwärtskompatibel** zum einzelnen `IPS_URL`. **Direkter Treiber: eine IPS-Migration auf Linux** — der Agent kann dann aus Alt- und Neu-Instanz lesen, Objekte/Skripte/Events **vergleichen und migrieren** und das Ergebnis verifizieren, statt blind auf einer Instanz zu arbeiten.
