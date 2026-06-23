@@ -45,6 +45,24 @@ cp .env.example .env   # dann .env mit echten Werten füllen
 | `IPS_URL` | JSON-RPC-Endpunkt, z. B. `http://192.168.1.10:3777/api/` (das `/api/` wird sonst ergänzt) |
 | `IPS_USER` / `IPS_PASSWORD` | Basic-Auth-Zugangsdaten (leer, falls keine Auth) |
 | `IPS_ENABLE_WRITE` | `false` (Default) = nur lesen · `true` = Schreib-/Dev-Tools aktiv |
+| `IPS_INSTANCES_FILE` | optional: Pfad zu einer YAML mit **mehreren benannten Instanzen** (s. u.) |
+
+### Mehrere Instanzen (Multi-Instance)
+
+Für mehrere IP-Symcon-Ziele (z. B. `home` + ein Migrations-Ziel `linux`): eine YAML-Datei anlegen (Vorlage: [`instances.example.yaml`](instances.example.yaml)) und `IPS_INSTANCES_FILE` darauf zeigen lassen.
+
+```yaml
+default: home
+instances:
+  home:
+    url: http://192.168.1.10:3777/api/
+    user: ""
+    password: ""
+  linux:
+    url: http://192.168.1.20:3777/api/
+```
+
+Jedes Tool nimmt dann einen optionalen `instance`-Parameter (`home`/`linux`); ohne Angabe → `default`. **Abwärtskompatibel:** ohne `IPS_INSTANCES_FILE` gilt das einzelne `IPS_URL` als implizite Default-Instanz — bestehende Setups laufen unverändert. Die echte YAML enthält Credentials → wie `.env` aus git heraushalten (`instances.yaml` ist gitignored).
 
 ## Start / Test
 
@@ -114,7 +132,7 @@ Claude Code: nach `~/.claude/skills/ipsymcon/` kopieren oder dorthin symlinken. 
 
 ## Roadmap
 
-- [ ] **Multi-Instanz-Support** — mehrere IP-Symcon-Ziele gleichzeitig ansprechen über **benannte Verbindungen** (z.B. `home` = aktuelle Instanz, `linux` = Migrationsziel). Jedes Tool bekommt einen optionalen `instance`-Parameter (Default = konfigurierte Standard-Instanz); Config als benannte Map (URL/User/Passwort je Instanz), **abwärtskompatibel** zum einzelnen `IPS_URL`. **Direkter Treiber: eine IPS-Migration auf Linux** — der Agent kann dann aus Alt- und Neu-Instanz lesen, Objekte/Skripte/Events **vergleichen und migrieren** und das Ergebnis verifizieren, statt blind auf einer Instanz zu arbeiten.
+- [x] **Multi-Instanz-Support** (v0.4) — benannte Verbindungen über `IPS_INSTANCES_FILE` (YAML), optionaler `instance`-Parameter je Tool (über `_Base`), Default-Instanz, **abwärtskompatibel** zum einzelnen `IPS_URL`. TDD + Live-Test (Default + benannte Instanz + unbekannte Instanz). **Treiber: IPS-Migration auf Linux** — aus Alt- und Neu-Instanz lesen, vergleichen, migrieren, verifizieren.
 - [x] **`ips_run_script_capture`** (v0.2) — Skript via `IPS_RunScriptWaitEx` ausführen und die **Ausgabe** zurückgeben (`echo`, nicht `return` — siehe Hinweis oben). Grundlage für agentisches Entwickeln (bauen → ausführen → Ergebnis prüfen → nachbessern). Optionale `$_IPS`-Parameter. Unit-Tests + Live-Test grün.
 - [ ] **`ips_read_log`** — Log-Abruf über das Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge): ein residenter **MessageSink** mit gefiltertem **Ring-Buffer** (`KL_ERROR`/`KL_WARNING`/…), der die öffentliche Funktion `MCPB_GetLog($id, level, count, filter)` per JSON-RPC bereitstellt. `ips_read_log` ruft dann nur diese Funktion (kein Inline-PHP, kein Logfile-Parsen). Hintergrund: IP-Symcon hat kein direktes „getMessages" (Meldungsfenster = Live-Abo); `IPS_GetLogDir()` gäbe nur die rohe Logdatei.
 - [x] **Companion-Modul [SymconMCPBridge](https://github.com/Schimmilab/SymconMCPBridge)** (MIT, released) — IP-Symcon-seitiges Modul, das Kernel-Log-Meldungen als gefilterten Ring-Buffer über JSON-RPC bereitstellt. Basis für `ips_read_log` und tiefere Bridge-/Helper-Funktionen. Installation via Module Control (Git-Repo).

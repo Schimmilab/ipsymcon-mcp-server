@@ -8,3 +8,4 @@ __pycache__/
 .idea/
 *.db
 .pytest_cache/
+instances.yaml

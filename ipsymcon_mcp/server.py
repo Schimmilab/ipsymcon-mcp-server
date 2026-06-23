@@ -25,6 +25,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from .client import IPSClient, IPSConfigError, IPSError
+from .config import make_client
 
 # Load .env from the project root if present, so credentials are available when the
 # server is launched as an MCP subprocess regardless of the working directory.
@@ -66,9 +67,9 @@ def _write_enabled() -> bool:
     return os.environ.get("IPS_ENABLE_WRITE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _client() -> IPSClient:
-    """Build a client from the current environment (raises IPSConfigError if unset)."""
-    return IPSClient()
+def _client(instance: str | None = None) -> IPSClient:
+    """Build a client for the named instance (or the default)."""
+    return make_client(instance)
 
 
 def _ts(value: Any) -> Any:
@@ -117,6 +118,11 @@ def _dumps(obj: Any) -> str:
 
 class _Base(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+
+    instance: str | None = Field(
+        default=None,
+        description="Named IP-Symcon instance to target (from IPS_INSTANCES_FILE); omit for the default.",
+    )
 
 
 class VarIdInput(_Base):
@@ -230,7 +236,7 @@ async def ips_get_value(params: VarIdInput) -> str:
     Use ips_get_variable for metadata (type, profile, last change).
     """
     try:
-        value = await _client().call("GetValue", [params.variable_id])
+        value = await _client(params.instance).call("GetValue", [params.variable_id])
         return _dumps({"variable_id": params.variable_id, "value": value})
     except Exception as e:  # noqa: BLE001 — mapped to actionable message
         return _handle_error(e)
@@ -248,7 +254,7 @@ async def ips_get_variable(params: VarIdInput) -> str:
     'updated'/'changed' are ISO timestamps. 'type' is Boolean/Integer/Float/String.
     """
     try:
-        client = _client()
+        client = _client(params.instance)
         meta = await client.call("IPS_GetVariable", [params.variable_id])
         value = await client.call("GetValue", [params.variable_id])
         name = await client.call("IPS_GetName", [params.variable_id])
@@ -280,7 +286,7 @@ async def ips_get_object(params: ObjIdInput) -> str:
     so you can traverse the tree. Root object is ID 0.
     """
     try:
-        obj = await _client().call("IPS_GetObject", [params.object_id])
+        obj = await _client(params.instance).call("IPS_GetObject", [params.object_id])
         if isinstance(obj, dict):
             obj = {**obj, "ObjectTypeName": OBJECT_TYPES.get(obj.get("ObjectType"), obj.get("ObjectType"))}
         return _dumps(obj)
@@ -300,7 +306,7 @@ async def ips_list_children(params: ObjIdInput) -> str:
     {"parent_id": int, "count": int, "children": [{"id", "name", "type"}]}.
     """
     try:
-        client = _client()
+        client = _client(params.instance)
         child_ids = await client.call("IPS_GetChildrenIDs", [params.object_id])
         children = []
         for cid in child_ids or []:
@@ -328,7 +334,7 @@ async def ips_find_object_by_name(params: FindByNameInput) -> str:
     use ips_list_children to browse if you only know part of the name.
     """
     try:
-        oid = await _client().call("IPS_GetObjectIDByName", [params.name, params.parent_id])
+        oid = await _client(params.instance).call("IPS_GetObjectIDByName", [params.name, params.parent_id])
         return _dumps({"name": params.name, "parent_id": params.parent_id, "object_id": oid})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -346,7 +352,7 @@ async def ips_get_script_content(params: ScriptIdInput) -> str:
     with ips_set_script_content so you work from the current source.
     """
     try:
-        content = await _client().call("IPS_GetScriptContent", [params.script_id])
+        content = await _client(params.instance).call("IPS_GetScriptContent", [params.script_id])
         return _dumps({"script_id": params.script_id, "content": content})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -375,7 +381,7 @@ async def ips_get_variable_by_path(params: GetVariableByPathInput) -> str:
     Example path: 'Räume/Büro/Zustand'. Returns JSON {path, variable_id, value}.
     """
     try:
-        client = _client()
+        client = _client(params.instance)
         oid = await _resolve_path(client, params.path, params.base_id, params.separator)
         value = await client.call("GetValue", [oid])
         return _dumps({"path": params.path, "variable_id": oid, "value": value})
@@ -395,7 +401,7 @@ async def ips_snapshot_variables(params: SnapshotVariablesInput) -> str:
     pass its 'variables' map to ips_diff_variables after a change to see what moved.
     """
     try:
-        client = _client()
+        client = _client(params.instance)
         snapshot = {}
         for vid in params.variable_ids:
             snapshot[str(vid)] = await client.call("GetValue", [vid])
@@ -417,7 +423,7 @@ async def ips_diff_variables(params: DiffVariablesInput) -> str:
     the build → run → see-what-changed loop for agentic development.
     """
     try:
-        client = _client()
+        client = _client(params.instance)
         changed = {}
         unchanged = 0
         for id_str, before_val in params.before.items():
@@ -458,7 +464,7 @@ async def ips_get_object_tree(params: GetObjectTreeInput) -> str:
     Returns the nested tree JSON rooted at root_id.
     """
     try:
-        tree = await _build_subtree(_client(), params.root_id, 0, params.max_depth)
+        tree = await _build_subtree(_client(params.instance), params.root_id, 0, params.max_depth)
         return _dumps(tree)
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -512,7 +518,7 @@ async def ips_export_subtree(params: ExportSubtreeInput) -> str:
     of this read-only export. Returns the nested JSON rooted at root_id.
     """
     try:
-        tree = await _export_node(_client(), params.root_id, 0, params.max_depth)
+        tree = await _export_node(_client(params.instance), params.root_id, 0, params.max_depth)
         return _dumps(tree)
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -535,7 +541,7 @@ async def ips_set_value(params: SetValueInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        await _client().call("SetValue", [params.variable_id, params.value])
+        await _client(params.instance).call("SetValue", [params.variable_id, params.value])
         return _dumps({"variable_id": params.variable_id, "value": params.value, "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -555,7 +561,7 @@ async def ips_request_action(params: SetValueInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        await _client().call("RequestAction", [params.variable_id, params.value])
+        await _client(params.instance).call("RequestAction", [params.variable_id, params.value])
         return _dumps({"variable_id": params.variable_id, "value": params.value, "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -574,7 +580,7 @@ async def ips_run_script(params: RunScriptInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        await _client().call("IPS_RunScript", [params.script_id])
+        await _client(params.instance).call("IPS_RunScript", [params.script_id])
         return _dumps({"script_id": params.script_id, "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -600,7 +606,7 @@ async def ips_run_script_capture(params: RunScriptCaptureInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        output = await _client().call("IPS_RunScriptWaitEx", [params.script_id, params.parameters])
+        output = await _client(params.instance).call("IPS_RunScriptWaitEx", [params.script_id, params.parameters])
         return _dumps({"script_id": params.script_id, "output": output, "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -620,7 +626,7 @@ async def ips_set_script_content(params: SetScriptContentInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        await _client().call("IPS_SetScriptContent", [params.script_id, params.content])
+        await _client(params.instance).call("IPS_SetScriptContent", [params.script_id, params.content])
         return _dumps({"script_id": params.script_id, "bytes_written": len(params.content), "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -640,7 +646,7 @@ async def ips_create_script(params: CreateScriptInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        client = _client()
+        client = _client(params.instance)
         new_id = await client.call("IPS_CreateScript", [0])  # 0 = PHP script
         await client.call("IPS_SetParent", [new_id, params.parent_id])
         await client.call("IPS_SetName", [new_id, params.name])
@@ -665,7 +671,7 @@ async def ips_create_category(params: CreateCategoryInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        client = _client()
+        client = _client(params.instance)
         new_id = await client.call("IPS_CreateCategory", [])
         await client.call("IPS_SetParent", [new_id, params.parent_id])
         await client.call("IPS_SetName", [new_id, params.name])
@@ -689,7 +695,7 @@ async def ips_create_variable(params: CreateVariableInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        client = _client()
+        client = _client(params.instance)
         new_id = await client.call("IPS_CreateVariable", [VAR_TYPE_TO_INT[params.variable_type]])
         await client.call("IPS_SetParent", [new_id, params.parent_id])
         await client.call("IPS_SetName", [new_id, params.name])
@@ -719,7 +725,7 @@ async def ips_create_event(params: CreateEventInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        client = _client()
+        client = _client(params.instance)
         new_id = await client.call("IPS_CreateEvent", [EVENT_TYPE_TO_INT[params.event_type]])
         await client.call("IPS_SetParent", [new_id, params.parent_id])
         await client.call("IPS_SetName", [new_id, params.name])
@@ -747,7 +753,7 @@ async def ips_call(params: CallInput) -> str:
     if not _write_enabled():
         return WRITE_DISABLED_MSG
     try:
-        result = await _client().call(params.method, params.params)
+        result = await _client(params.instance).call(params.method, params.params)
         return _dumps({"method": params.method, "result": result})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)

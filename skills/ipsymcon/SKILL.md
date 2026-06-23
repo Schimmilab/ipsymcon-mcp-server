@@ -85,6 +85,13 @@ Write/dev tools (only after an approved plan; gated by `IPS_ENABLE_WRITE`):
 If a write tool returns "Write/dev tools are disabled", `IPS_ENABLE_WRITE` is not set to
 true — tell the user, don't try to work around it.
 
+## Targeting a specific instance (multi-instance setups)
+
+If the server is configured with multiple named instances (`IPS_INSTANCES_FILE`), **every
+tool takes an optional `instance`** (e.g. `home`, `linux`); omit it for the default. This is
+how you read from one system and write to another — e.g. migrating a subtree from an old
+IP-Symcon to a new one. Single-instance setups ignore it.
+
 ## How IP-Symcon is structured (enough to work confidently)
 
 Everything is one tree of **objects**, each with an integer ID (root = `0`). Object types:

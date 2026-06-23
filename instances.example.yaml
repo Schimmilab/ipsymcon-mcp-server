@@ -1,0 +1,20 @@
+# Multi-instance config for the IP-Symcon MCP server.
+#
+# Point IPS_INSTANCES_FILE at a copy of this file. Keep the real file OUT of git —
+# it holds credentials, exactly like .env. Without this file the server falls back to
+# the single IPS_URL / IPS_USER / IPS_PASSWORD env vars (one implicit "default" instance),
+# so existing single-instance setups keep working unchanged.
+#
+# Every tool then takes an optional `instance` parameter; omit it to use the default.
+
+default: home          # instance used when a tool call omits `instance`
+
+instances:
+  home:
+    url: http://192.168.1.10:3777/api/
+    user: ""           # IP-Symcon user (leave empty if the installation has no auth)
+    password: ""
+  linux:               # e.g. a migration target
+    url: http://192.168.1.20:3777/api/
+    user: ""
+    password: ""
