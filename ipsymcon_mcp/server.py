@@ -221,6 +221,13 @@ class ExportSubtreeInput(_Base):
     max_depth: int = Field(default=25, description="How many levels deep to export", ge=1, le=50)
 
 
+class ImportSubtreeInput(_Base):
+    tree: dict[str, Any] = Field(
+        ..., description="A subtree JSON as produced by ips_export_subtree (nested {id,name,type,...,children}).")
+    target_parent_id: int = Field(
+        ..., description="Object ID under which to recreate the subtree root (0 = tree root).", ge=0)
+
+
 # --- Read tools --------------------------------------------------------------
 
 
@@ -734,6 +741,88 @@ async def ips_create_event(params: CreateEventInput) -> str:
             "event_id": new_id, "name": params.name, "parent_id": params.parent_id,
             "type": params.event_type, "active": params.active, "ok": True,
         })
+    except Exception as e:  # noqa: BLE001
+        return _handle_error(e)
+
+
+def _var_type_int(vt: Any) -> int:
+    """Map an exported variable_type ('Float'/'Boolean'/...) or raw int to IP-Symcon's type int."""
+    return vt if isinstance(vt, int) else VAR_TYPE_TO_INT[str(vt).lower()]
+
+
+_IMPORT_SKIP_REASON = (
+    "not mechanically importable — needs the migration skill "
+    "(instance/event/link config + reference remapping)"
+)
+
+
+async def _import_node(
+    client: IPSClient, node: dict[str, Any], parent_id: int,
+    id_map: dict[str, int], skipped: list[dict[str, Any]],
+) -> int | None:
+    """Recreate one node under parent_id, record old→new in id_map, recurse into children.
+
+    Handles the deterministic types (category/variable/script). Instances, events and links are
+    recorded under ``skipped`` (they need config + reference remapping → the migration skill); their
+    children are still imported under the same parent so a skipped node never orphans a subtree.
+    """
+    otype = node.get("type")
+    old_id = node.get("id")
+    name = node.get("name") or ""
+    new_id: int | None
+    if otype == "Category":
+        new_id = await client.call("IPS_CreateCategory", [])
+        await client.call("IPS_SetParent", [new_id, parent_id])
+        await client.call("IPS_SetName", [new_id, name])
+    elif otype == "Variable":
+        new_id = await client.call("IPS_CreateVariable", [_var_type_int(node.get("variable_type"))])
+        await client.call("IPS_SetParent", [new_id, parent_id])
+        await client.call("IPS_SetName", [new_id, name])
+        if node.get("profile"):
+            await client.call("IPS_SetVariableCustomProfile", [new_id, node["profile"]])
+        if node.get("value") is not None:
+            await client.call("SetValue", [new_id, node["value"]])
+    elif otype == "Script":
+        new_id = await client.call("IPS_CreateScript", [0])
+        await client.call("IPS_SetParent", [new_id, parent_id])
+        await client.call("IPS_SetName", [new_id, name])
+        if node.get("content"):
+            await client.call("IPS_SetScriptContent", [new_id, node["content"]])
+    else:
+        skipped.append({"id": old_id, "type": otype, "reason": _IMPORT_SKIP_REASON})
+        new_id = None
+    if new_id is not None and old_id is not None:
+        id_map[str(old_id)] = new_id
+    child_parent = new_id if new_id is not None else parent_id
+    for child in node.get("children") or []:
+        await _import_node(client, child, child_parent, id_map, skipped)
+    return new_id
+
+
+@mcp.tool(
+    name="ips_import_subtree",
+    annotations={"title": "Recreate a subtree from exported JSON", "readOnlyHint": False,
+                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+)
+async def ips_import_subtree(params: ImportSubtreeInput) -> str:
+    """Mechanically recreate a subtree (from ips_export_subtree JSON) under a target parent. Requires IPS_ENABLE_WRITE.
+
+    The deterministic half of a migration: recreates categories, variables (type, profile, value)
+    and scripts (content), re-parenting each child under its newly created parent, and returns an
+    old→new ID map. Instances, events and links are NOT recreated here — they need configuration and
+    reference remapping, which is the agentic Migration skill's job; they are reported under
+    'skipped' (with their original IDs) so the follow-up can wire them up using the id_map.
+    Returns JSON {root_id, id_map, created, skipped, ok}.
+    """
+    if not _write_enabled():
+        return WRITE_DISABLED_MSG
+    try:
+        client = _client(params.instance)
+        id_map: dict[str, int] = {}
+        skipped: list[dict[str, Any]] = []
+        root_new = await _import_node(client, params.tree, params.target_parent_id, id_map, skipped)
+        return _dumps({"root_id": root_new, "id_map": id_map, "created": len(id_map),
+                       "skipped": skipped, "ok": True})
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
 

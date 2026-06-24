@@ -22,7 +22,9 @@ step is there to catch.
 - `IPS_SetPosition(int ID, int Position)` — sort order among siblings.
 - `IPS_SetHidden(int ID, bool Hidden)` — hide from visualisation.
 - `IPS_SetDisabled(int ID, bool Disabled)` — disable (good reversible alternative to delete).
-- `IPS_DeleteObject(int ID)` — **destructive**, cascades to children. Plan explicitly.
+- **Delete is type-specific — there is NO generic `IPS_DeleteObject`** (verified live 2026-06-24: it returns error -44001 "Method not found"). Use the matching function and delete **children before their parent** (a non-empty category won't delete):
+  - `IPS_DeleteVariable(int ID)` · `IPS_DeleteCategory(int ID)` · `IPS_DeleteScript(int ID, bool DeleteFile)` · `IPS_DeleteEvent(int ID)` · `IPS_DeleteInstance(int ID)` · `IPS_DeleteLink(int ID)` · `IPS_DeleteMedia(int ID, bool DeleteFile)`.
+  - All **destructive** — plan explicitly. `IPS_SetDisabled` (above) is the reversible alternative.
 - `IPS_GetObjectIDByIdent(string Ident, int ParentID)` — resolve by ident.
 
 ## Variables
