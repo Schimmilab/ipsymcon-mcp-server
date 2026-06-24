@@ -46,7 +46,7 @@ If you ever find yourself about to call **any write/dev tool** (anything in the 
 table below) *before* the user has seen and approved a plan — stop. That's the failure
 mode this skill exists to prevent.
 
-## The MCP tools (21)
+## The MCP tools (22)
 
 Read tools (always available, safe to use during planning):
 
@@ -77,6 +77,7 @@ Write/dev tools (only after an approved plan; gated by `IPS_ENABLE_WRITE`):
 | `ips_create_category` | create a category (structure the tree). |
 | `ips_create_variable` | create a typed variable (`boolean`/`integer`/`float`/`string`, optional profile). |
 | `ips_create_event` | create an event shell (`triggered`/`cyclic`/`weekly`); detailed config via `ips_call`. |
+| `ips_import_subtree` | mechanically recreate a subtree from `ips_export_subtree` JSON (categories/variables/scripts) under a target parent → old→new **id_map**; instances/events/links are `skipped` (handled by the `ips-migration` skill). |
 | `ips_call` | generic gateway to any IP-Symcon function for everything without a dedicated tool (instances, profiles, event triggers, rename, move, delete…). |
 
 > **`ips_run_script_capture` captures the script's OUTPUT** (what it `echo`/`print`s), **not**

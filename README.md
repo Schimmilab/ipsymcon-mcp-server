@@ -112,6 +112,7 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 | `ips_create_category` | IPS_CreateCategory | Kategorie anlegen (Objektbaum strukturieren) |
 | `ips_create_variable` | IPS_CreateVariable (+Profil) | typisierte Variable anlegen (`boolean`/`integer`/`float`/`string`, optional Profil) |
 | `ips_create_event` | IPS_CreateEvent | Event-Hülle anlegen (`triggered`/`cyclic`/`weekly`); Detail-Config via `ips_call` |
+| `ips_import_subtree` | IPS_CreateCategory/-Variable/-Script (+SetParent/Name/Profil/Wert/Content) | Teilbaum aus `ips_export_subtree`-JSON mechanisch wiederanlegen → **alte→neue ID-Map** (Restore/Migration). Instanzen/Events/Links → `skipped` (Migrations-Skill). |
 | `ips_call` | beliebig | Generischer Gateway für volle API-Abdeckung (z. B. IPS_CreateInstance, IPS_SetEventCyclic) |
 
 > **Hinweis zu `ips_run_script_capture`:** IP-Symcon erfasst die **Ausgabe** des Skripts (was es `echo`/`print`t) — ein top-level PHP-`return` wird **nicht** zurückgegeben (kommt leer). Das Skript muss sein Ergebnis also `echo`en.
@@ -122,11 +123,13 @@ claude mcp add ipsymcon -s user -- /Users/<user>/workspace/ipsymcon-mcp-server/.
 
 Mitgeliefert in [`skills/ipsymcon/`](skills/ipsymcon/) — das Domänen-Können auf den Tools: **Plan-First-Sicherheitsworkflow** (read → plan → approve → execute → report), Tool-Übersicht, IPS-Objektmodell. Aufgeteilt nach dem Prinzip *Anweisung im Skill, Workflow separat*:
 
-- [`SKILL.md`](skills/ipsymcon/SKILL.md) — die Direktive: die eine Regel (vor Schreibzugriff planen), die 21 Tools, Struktur-Primer.
+- [`SKILL.md`](skills/ipsymcon/SKILL.md) — die Direktive: die eine Regel (vor Schreibzugriff planen), die 22 Tools, Struktur-Primer.
 - [`references/workflow.md`](skills/ipsymcon/references/workflow.md) — die detaillierten Workflows + Plan-/Report-Templates + Fallstricke.
 - [`references/ips-functions.md`](skills/ipsymcon/references/ips-functions.md) — `ips_call`-Funktions-Cheat-Sheet (Event-Trigger, Profile, Instanzen).
 
-Claude Code: nach `~/.claude/skills/ipsymcon/` kopieren oder dorthin symlinken. So wachsen Tools (MCP) und Playbook (Skill) im selben Repo/Release im Gleichschritt.
+Dazu der eigenständige **Migrations-Skill** [`skills/ips-migration/`](skills/ips-migration/) — Greenfield-Migration eines Teilbaums auf eine andere Instanz (Export → Plan-First mit Modul-Check/Referenz-Scan/Flags → Zwei-Pass: anlegen, dann Referenzen via ID-Map verdrahten → Verify), aufbauend auf `ips_export_subtree`/`ips_import_subtree`.
+
+Claude Code: nach `~/.claude/skills/ipsymcon/` (bzw. `…/ips-migration/`) kopieren oder dorthin symlinken. So wachsen Tools (MCP) und Playbook (Skill) im selben Repo/Release im Gleichschritt.
 
 ---
 
@@ -140,6 +143,7 @@ Claude Code: nach `~/.claude/skills/ipsymcon/` kopieren oder dorthin symlinken. 
 - [ ] **Dry-Run-Modus** + automatisches **Snapshot-Backup** vor Schreibzugriffen
 - [x] **Beobachtungs-/Navigations-Tools** (v0.3, aus dem Community-Vergleich): `ips_get_object_tree` (ganzer Teilbaum), `ips_get_variable_by_path` (Pfad statt ID), `ips_snapshot_variables` + `ips_diff_variables` (Wirkungskontrolle build→run→diff). TDD + Live-Test.
 - [x] **`ips_export_subtree`** — Backup-Hälfte: Teilbaum → reiches JSON (Variable Typ+Profil+Wert, Skript-Content, Event/Instanz/Link-Detail). Deterministisch, read-only. TDD + Live-Test.
-- [ ] **`ips_import_subtree` + Migrations-Skill** — Restore-/Migrations-Hälfte: Objekte mechanisch anlegen (MCP, gibt alte→neue ID-Map zurück) + **agentische Adaption** (semantisches Matching, Referenz-Umschreiben in Events/Skripten/Links/Instanz-Configs) als Skill. Hängt an Multi-Instanz-Support.
+- [x] **`ips_import_subtree`** (v0.4 — TDD + Live-Round-Trip) — Restore-/Migrations-Hälfte: cat/var/script mechanisch anlegen, **alte→neue ID-Map** zurückgeben; Instanzen/Events/Links bewusst `skipped`. Deterministisches Struktur-Primitiv.
+- [x] **Migrations-Skill** [`skills/ips-migration/`](skills/ips-migration/) — agentische Adaption (Greenfield v1): Export → Plan-First (Modul-Check + Referenz-Scan + Flags) → Zwei-Pass (anlegen → Referenzen via ID-Map verdrahten) → Verify. Semantisches Matching auf bestehende Ziel-Objekte + Bewertung/Refactoring = spätere Skills.
 - [ ] Evaluations (mcp-builder Phase 4)
 - [ ] Gegenstück: Home-Assistant Dev-MCP (zweite Backend-Schicht des Fusionsprojekts)
