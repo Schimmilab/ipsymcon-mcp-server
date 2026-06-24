@@ -129,6 +129,8 @@ Mitgeliefert in [`skills/ipsymcon/`](skills/ipsymcon/) — das Domänen-Können 
 
 Dazu der eigenständige **Migrations-Skill** [`skills/ips-migration/`](skills/ips-migration/) — Greenfield-Migration eines Teilbaums auf eine andere Instanz (Export → Plan-First mit Modul-Check/Referenz-Scan/Flags → Zwei-Pass: anlegen, dann Referenzen via ID-Map verdrahten → Verify), aufbauend auf `ips_export_subtree`/`ips_import_subtree`.
 
+Und der **Cleanup-Skill** [`skills/ips-cleanup/`](skills/ips-cleanup/) — IPS-Health-Review + *Phase 0* der Migration: Error-Scan (Instanzen mit Status ≥ 200) → Triage → **3-Vektor-Dependency-Analyse** (Kinder · Links · ConnectionID) → Plan-First-Cascade-Delete + sicheres Fixen (Credentials werden geflaggt, nie geraten) → Verify. Erprobte Scan-Snippets mitgeliefert.
+
 Claude Code: nach `~/.claude/skills/ipsymcon/` (bzw. `…/ips-migration/`) kopieren oder dorthin symlinken. So wachsen Tools (MCP) und Playbook (Skill) im selben Repo/Release im Gleichschritt.
 
 ---
@@ -145,5 +147,6 @@ Claude Code: nach `~/.claude/skills/ipsymcon/` (bzw. `…/ips-migration/`) kopie
 - [x] **`ips_export_subtree`** — Backup-Hälfte: Teilbaum → reiches JSON (Variable Typ+Profil+Wert, Skript-Content, Event/Instanz/Link-Detail). Deterministisch, read-only. TDD + Live-Test.
 - [x] **`ips_import_subtree`** (v0.4 — TDD + Live-Round-Trip) — Restore-/Migrations-Hälfte: cat/var/script mechanisch anlegen, **alte→neue ID-Map** zurückgeben; Instanzen/Events/Links bewusst `skipped`. Deterministisches Struktur-Primitiv.
 - [x] **Migrations-Skill** [`skills/ips-migration/`](skills/ips-migration/) — agentische Adaption (Greenfield v1): Export → Plan-First (Modul-Check + Referenz-Scan + Flags) → Zwei-Pass (anlegen → Referenzen via ID-Map verdrahten) → Verify. Semantisches Matching auf bestehende Ziel-Objekte + Bewertung/Refactoring = spätere Skills.
+- [x] **Cleanup-Skill** [`skills/ips-cleanup/`](skills/ips-cleanup/) — IPS-Health-Review + Vor-Migrations-Cleanup (*Phase 0*): Error-Scan (Status ≥ 200) → Triage → 3-Vektor-Dependency-Analyse (Kinder/Links/ConnectionID) → Plan-First-Cascade-Delete + sicheres Fixen (Credentials geflaggt) → Verify. Scan-Snippets mitgeliefert, live validiert.
 - [ ] Evaluations (mcp-builder Phase 4)
 - [ ] Gegenstück: Home-Assistant Dev-MCP (zweite Backend-Schicht des Fusionsprojekts)
