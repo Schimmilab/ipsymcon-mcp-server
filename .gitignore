@@ -9,3 +9,6 @@ __pycache__/
 *.db
 .pytest_cache/
 instances.yaml
+
+# Laufzeitzustand, gehört nicht ins Repo
+data/
