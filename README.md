@@ -150,3 +150,8 @@ Claude Code: nach `~/.claude/skills/ipsymcon/` (bzw. `…/ips-migration/`) kopie
 - [x] **Cleanup-Skill** [`skills/ips-cleanup/`](skills/ips-cleanup/) — IPS-Health-Review + Vor-Migrations-Cleanup (*Phase 0*): Error-Scan (Status ≥ 200) → Triage → 3-Vektor-Dependency-Analyse (Kinder/Links/ConnectionID) → Plan-First-Cascade-Delete + sicheres Fixen (Credentials geflaggt) → Verify. Scan-Snippets mitgeliefert, live validiert.
 - [ ] Evaluations (mcp-builder Phase 4)
 - [ ] Gegenstück: Home-Assistant Dev-MCP (zweite Backend-Schicht des Fusionsprojekts)
+
+## Maintainer
+
+Schimmi — https://schimmilab.de
+Issues und Pull Requests willkommen.
