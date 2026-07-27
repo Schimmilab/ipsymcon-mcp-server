@@ -45,6 +45,9 @@ Step-by-step, the ready-to-run scan scripts and the delete-order rules: referenc
 ## The non-negotiables
 
 - **Review is read-only.** Phases 1–2 never write. Surfacing problems ≠ changing the system.
+- **Look for what still runs, not only for what is red.** An active event on a dead branch keeps
+  polling APIs and keeping stale credentials in use while every status reads `102`. Phase 1b.
+  Deactivating an event is the cheap, reversible first move — propose it before any removal plan.
 - **Three-vector dependency check before ANY instance delete** — children · incoming links ·
   **ConnectionID**. Skipping ConnectionID is exactly how you create new red while removing old red.
 - **Plan-first for every write.** Present the full removal cascade / fix set, then STOP for approval.

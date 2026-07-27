@@ -33,6 +33,47 @@ echo json_encode(['total_instances'=>count($list), 'error_count'=>count($err), '
 Optional dead-object heuristics (surface, don't act): disabled objects (`IPS_GetObject`→`ObjectIsDisabled`),
 variables never updated (`IPS_GetVariable`→`VariableUpdated == 0` or very old), empty categories.
 
+### 1b — Active events on dead branches (read-only) — DO NOT SKIP
+
+The error scan finds what is *broken*. This finds what is *still running with no purpose* — and
+that is often the more expensive problem, because it consumes API calls, keeps stale credentials
+in use and can hit rate limits, all while looking healthy (`InstanceStatus 102`).
+
+An event whose target branch is dead is invisible to every other check in this workflow.
+
+```php
+<?php
+// $roots = branches already flagged as stale (all their variables old / values at 0)
+$roots = [/* e.g. 51958 */];
+function descX($id){ $a=[$id]; foreach (IPS_GetChildrenIDs($id) as $c) { $a=array_merge($a, descX($c)); } return $a; }
+$out = [];
+foreach ($roots as $r) {
+  foreach (descX($r) as $x) {
+    if (IPS_GetObject($x)['ObjectType'] != 4) continue;   // 4 = event
+    $e = IPS_GetEvent($x);
+    if (!$e['EventActive']) continue;
+    $out[] = ['event'=>$x, 'under'=>IPS_GetName(IPS_GetObject($x)['ParentID']), 'root'=>IPS_GetName($r),
+              'last'=>$e['LastRun'] ? date('Y-m-d H:i', $e['LastRun']) : 'never',
+              'next'=>$e['NextRun'] ? date('Y-m-d H:i', $e['NextRun']) : '-'];
+  }
+}
+echo json_encode($out, JSON_UNESCAPED_UNICODE);
+```
+
+**Read it like this:** a `NextRun` in the near future on a branch whose variables are years old
+means the branch is *actively polling something for nothing*.
+
+> *Why this is in the workflow (2026-07-27):* a Renault-API test branch from **2020** — every
+> value at 0, all master data dated 13.12.2020 — turned out to be polling the cloud API **every
+> five minutes** and refreshing its token nightly. Roughly 105,000 calls a year to no effect,
+> keeping a plaintext API key from 2020 permanently in use. Every other check in this workflow
+> called the branch healthy: the instances were `102`, nothing was red.
+
+**The cheapest first move is deactivating, not deleting.** `IPS_SetEventActive($id, false)` stops
+the traffic immediately, is reversible in one call, and turns the "do we still need this?"
+question into an experiment: if nobody misses it within two weeks, the removal decision is easy.
+Propose this **before** the removal plan — it is the one write that is safe to suggest early.
+
 ## Phase 2 — Triage: fixable vs dead (you decide)
 
 For each error, read the detail (`IPS_GetInstance`, the status code's meaning is module-specific,
