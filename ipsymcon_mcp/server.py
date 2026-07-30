@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from .client import IPSClient, IPSConfigError, IPSError
