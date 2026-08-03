@@ -38,6 +38,18 @@ python3 -m venv .venv
 cp .env.example .env   # dann .env mit echten Werten füllen
 ```
 
+### Skills als Claude-Plugin
+
+Die fünf Skills unter [`skills/`](skills/) sind als Claude-Code-Plugin gebündelt
+([`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)) und lassen sich damit installieren,
+statt sie von Hand nach `~/.claude/skills/` zu kopieren.
+
+⚠️ **Das Plugin liefert nur die Skills, nicht den Server.** Der MCP-Server wird weiterhin wie oben
+installiert und in der eigenen MCP-Konfiguration eingetragen — er braucht ein venv und eine `.env`
+mit der IPS-Adresse, beides kann ein Plugin nicht mitbringen. **Ohne laufenden Server sind die
+Skills wirkungslos.** (Ein `.mcp.json` im Plugin wird erst sinnvoll, wenn der Server per `uvx`
+installierbar ist — steht auf der Roadmap.)
+
 ## Konfiguration (`.env`)
 
 | Variable | Bedeutung |
