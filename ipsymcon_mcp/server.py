@@ -24,6 +24,7 @@ import httpx
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import skills
 from .client import IPSClient, IPSConfigError, IPSError
 from .config import make_client
 
@@ -43,7 +44,12 @@ import logging  # noqa: E402
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-mcp = FastMCP("ipsymcon_mcp")
+mcp = FastMCP("ipsymcon_mcp", instructions=skills.INSTRUCTIONS)
+
+# Die Runbooks aus skills/ als MCP-Prompts anbieten. Sie liegen ohnehin im Repo und
+# werden als Claude-Code-Plugin ausgeliefert — über die MCP-Schnittstelle erreichen
+# sie zusätzlich jeden Client, der das Plugin nicht kennt. Siehe skills.py.
+skills.register(mcp)
 
 # --- Constants ---------------------------------------------------------------
 
