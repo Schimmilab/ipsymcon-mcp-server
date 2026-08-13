@@ -145,6 +145,29 @@ Und der **Cleanup-Skill** [`skills/ips-cleanup/`](skills/ips-cleanup/) — IPS-H
 
 Claude Code: nach `~/.claude/skills/ipsymcon/` (bzw. `…/ips-migration/`) kopieren oder dorthin symlinken. So wachsen Tools (MCP) und Playbook (Skill) im selben Repo/Release im Gleichschritt.
 
+### Die Runbooks kommen auch über die MCP-Schnittstelle (v0.5)
+
+Skill-Ordner und Claude-Code-Plugin setzen beide voraus, dass jemand sie **installiert**. Wer den Server ohne das Plugin einbindet — anderer Client, anderer Rechner, jemand anderes — bekommt 22 Tools und keinen Hinweis darauf, dass es Betriebsanweisungen dazu gibt. Die wichtigste davon ist kein Komfort, sondern ein Sicherheitsverhalten: *Plan zeigen, bevor geschrieben wird.*
+
+Deshalb liefert der Server sie zusätzlich selbst aus — über zwei MCP-Primitives:
+
+| Weg | Charakter | Inhalt |
+|---|---|---|
+| **`instructions`** (im `initialize`-Handshake) | **Push** — landet ungefragt im Systemprompt, auch ohne Plugin | Zweck · die harte Schreibgrenze · ein **Zeiger** auf die Runbooks |
+| **`prompts`** (`prompts/list` · `prompts/get`) | **Pull** — auf Abruf | ein Prompt je Runbook, in Claude Code als `/mcp__ipsymcon__<name>` |
+
+```
+/mcp__ipsymcon__ipsymcon         Einstieg: Objektbaum, Skripte, Variablen, Events
+/mcp__ipsymcon__ips-automation   Eine NEUE Automation entwerfen
+/mcp__ipsymcon__ips-cleanup      Rote Logs, tote Instanzen, verwaiste Objekte
+/mcp__ipsymcon__ips-migration    Teilbaum auf eine andere Instanz umziehen
+/mcp__ipsymcon__ips-refactor     Umstrukturieren ohne Verhaltensänderung
+```
+
+**Die Entwurfsregel dahinter ist wichtiger als die Funktion: im Server steht kein Skill-Text.** Die Prompts lesen die `SKILL.md`-Dateien (plus `references/`) zur Laufzeit aus `skills/`. Eine Kopie wäre ein zweiter Stand, der irgendwann vom ersten abweicht — und der Server hätte dann eine Sicherheitsregel behauptet, die im Repo längst anders lautet. **Eine Datei, drei Auslieferungswege** (Skill-Ordner · Plugin · MCP). Ein Test prüft genau das: Datei ändern → Prompt-Ausgabe muss sich mitändern.
+
+Fehlt `skills/` (etwa bei reiner Paketinstallation ohne Repo), meldet der Prompt das **mit Bezugsquelle**, statt leer zurückzukommen.
+
 ---
 
 ## Roadmap
