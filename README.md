@@ -54,10 +54,23 @@ installierbar ist — steht auf der Roadmap.)
 
 | Variable | Bedeutung |
 |---|---|
-| `IPS_URL` | JSON-RPC-Endpunkt, z. B. `http://192.168.1.10:3777/api/` (das `/api/` wird sonst ergänzt) |
+| `IPS_URL` | JSON-RPC-Endpunkt, z. B. `https://192.168.1.10:3777/api/` (das `/api/` wird sonst ergänzt) |
 | `IPS_USER` / `IPS_PASSWORD` | Basic-Auth-Zugangsdaten (leer, falls keine Auth) |
 | `IPS_ENABLE_WRITE` | `false` (Default) = nur lesen · `true` = Schreib-/Dev-Tools aktiv |
 | `IPS_INSTANCES_FILE` | optional: Pfad zu einer YAML mit **mehreren benannten Instanzen** (s. u.) |
+
+> ⚠️ **`https://` verwenden, sobald `IPS_USER`/`IPS_PASSWORD` gesetzt sind.** Basic Auth überträgt
+> Benutzer und Passwort nur base64-kodiert — über `http://` liest sie jeder mit, der im selben Netz
+> hängt, samt aller Schaltbefehle. IP-Symcon liefert auf Port 3777 standardmäßig unverschlüsseltes
+> HTTP aus; TLS ist also eine bewusste Entscheidung, kein Automatismus.
+>
+> ⚠️ **`chmod 600` für `.env` und die echte `instances.yaml`** — beide enthalten Zugangsdaten im Klartext.
+>
+> ⚠️ **`IPS_ENABLE_WRITE=true` ist mehr als „Variablen setzen".** Damit sind auch `ips_create_script`,
+> `ips_run_script` und `ips_call` offen — das ist **Codeausführung auf dem IP-Symcon-Server** mit dessen
+> Rechten. Die „erst planen, dann ausführen"-Regel ist eine Anweisung an das Sprachmodell, **kein
+> technischer Riegel**: Der Server prüft nur dieses eine Boolean. Wer den MCP-Client kontrolliert, hat
+> bei offenem Gate vollen Zugriff auf die Haussteuerung.
 
 ### Mehrere Instanzen (Multi-Instance)
 
@@ -67,11 +80,11 @@ Für mehrere IP-Symcon-Ziele (z. B. `home` + ein Migrations-Ziel `linux`): eine 
 default: home
 instances:
   home:
-    url: http://192.168.1.10:3777/api/
+    url: https://192.168.1.10:3777/api/
     user: ""
     password: ""
   linux:
-    url: http://192.168.1.20:3777/api/
+    url: https://192.168.1.20:3777/api/
 ```
 
 Jedes Tool nimmt dann einen optionalen `instance`-Parameter (`home`/`linux`); ohne Angabe → `default`. **Abwärtskompatibel:** ohne `IPS_INSTANCES_FILE` gilt das einzelne `IPS_URL` als implizite Default-Instanz — bestehende Setups laufen unverändert. Die echte YAML enthält Credentials → wie `.env` aus git heraushalten (`instances.yaml` ist gitignored).

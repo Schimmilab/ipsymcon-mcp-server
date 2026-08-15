@@ -6,15 +6,19 @@
 # so existing single-instance setups keep working unchanged.
 #
 # Every tool then takes an optional `instance` parameter; omit it to use the default.
+#
+# ⚠️ chmod 600 the real file — it holds credentials in plain text.
+# ⚠️ Prefer https:// URLs. Basic Auth over plain http:// exposes credentials and
+#    every switching command to anyone on the same network.
 
 default: home          # instance used when a tool call omits `instance`
 
 instances:
   home:
-    url: http://192.168.1.10:3777/api/
+    url: https://192.168.1.10:3777/api/
     user: ""           # IP-Symcon user (leave empty if the installation has no auth)
     password: ""
   linux:               # e.g. a migration target
-    url: http://192.168.1.20:3777/api/
+    url: https://192.168.1.20:3777/api/
     user: ""
     password: ""
