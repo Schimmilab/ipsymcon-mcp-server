@@ -54,6 +54,61 @@ def _load_instances() -> tuple[dict[str, dict], str | None]:
     return {}, None
 
 
+def resolve_instance_name(instance: str | None = None) -> str:
+    """Resolve the effective instance name without building a client.
+
+    Split out so the write gate can ask *which* instance a call would hit before
+    deciding whether it may proceed — see ``instance_write_enabled``.
+    """
+    instances, default = _load_instances()
+    if not instances:
+        raise IPSConfigError(
+            "No IP-Symcon instance configured. Set IPS_URL (single instance) or "
+            "IPS_INSTANCES_FILE pointing at an instances YAML (multi-instance)."
+        )
+    name = instance or default or os.environ.get("IPS_DEFAULT_INSTANCE") or None
+    if name is None:
+        if len(instances) == 1:
+            name = next(iter(instances))
+        else:
+            raise IPSConfigError(
+                f"No instance given and no default set. Available: {', '.join(instances)}."
+            )
+    if name not in instances:
+        raise IPSConfigError(f"Unknown instance '{name}'. Available: {', '.join(instances)}.")
+    return name
+
+
+def instance_write_enabled(instance: str | None = None) -> bool | None:
+    """Per-instance write permission from the YAML, or ``None`` if not configured.
+
+    ``None`` means "the instance says nothing" — the caller then falls back to the
+    global ``IPS_ENABLE_WRITE`` alone, which keeps every existing setup working.
+
+    ⚠️ **Why this exists (2026-08-15, security review).** Until now the only gate was
+    the process-wide ``IPS_ENABLE_WRITE``. The README recommended enabling writes
+    "only against a test/staging instance" — but that was *not configurable*: the
+    instances YAML knew only url/user/password. Anyone enabling writes for a
+    migration target (``linux``) unavoidably opened the production instance
+    (``home``) as well — a lived-in house with heating, blinds and sockets. A
+    forgotten ``instance`` parameter falls back to the default, and the default is
+    the house.
+    """
+    instances, _ = _load_instances()
+    try:
+        name = resolve_instance_name(instance)
+    except IPSConfigError:
+        return None
+    cfg = instances.get(name) or {}
+    value = cfg.get("enable_write")
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    # YAML may hand us a string ("true"/"yes"); anything unrecognised counts as False.
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def make_client(instance: str | None = None) -> IPSClient:
     """Build an IPSClient for the named instance (or the default)."""
     instances, default = _load_instances()

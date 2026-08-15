@@ -66,6 +66,19 @@ installierbar ist — steht auf der Roadmap.)
 >
 > ⚠️ **`chmod 600` für `.env` und die echte `instances.yaml`** — beide enthalten Zugangsdaten im Klartext.
 >
+> ✅ **Seit 2026-08-15 lässt sich das pro Instanz begrenzen.** In der Instanzen-YAML kann jede
+> Instanz ein `enable_write: true|false` tragen. **Beide Tore müssen zustimmen** — die Env-Variable
+> *und* das Instanz-Flag. `enable_write: true` erlaubt nie etwas allein; `enable_write: false`
+> **entzieht** Schreibrechte aber auch bei gesetzter Env-Variable. Damit ist die Empfehlung, nur
+> gegen eine Testinstanz freizuschalten, erstmals umsetzbar: Migrationsziel offen, bewohntes Haus
+> dicht. Ohne Angabe erbt eine Instanz die Env-Variable — bestehende Setups laufen unverändert.
+>
+> ⚠️ **`ips_export_subtree` exportiert Instanz-Konfigurationen nur noch auf ausdrückliche
+> Anforderung** (`include_configuration=true`, Default aus). Diese Blöcke tragen regelmäßig
+> Zugangsdaten von Integrationen (FritzBox, Hue, Cloud-Keys) — sie aus einem als *read-only*
+> markierten Werkzeug herauszugeben machte aus reinem Lesen einen Abfluss von Zugangsdaten in den
+> Modellkontext.
+
 > ⚠️ **`IPS_ENABLE_WRITE=true` ist mehr als „Variablen setzen".** Damit sind auch `ips_create_script`,
 > `ips_run_script` und `ips_call` offen — das ist **Codeausführung auf dem IP-Symcon-Server** mit dessen
 > Rechten. Die „erst planen, dann ausführen"-Regel ist eine Anweisung an das Sprachmodell, **kein
