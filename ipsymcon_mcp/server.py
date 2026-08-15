@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import skills
 from .client import IPSClient, IPSConfigError, IPSError
-from .config import make_client
+from .config import instance_write_enabled, make_client
 
 # Load .env from the project root if present, so credentials are available when the
 # server is launched as an MCP subprocess regardless of the working directory.
@@ -69,8 +69,29 @@ WRITE_DISABLED_MSG = (
 # --- Shared helpers ----------------------------------------------------------
 
 
-def _write_enabled() -> bool:
+def _global_write_enabled() -> bool:
     return os.environ.get("IPS_ENABLE_WRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _write_enabled(instance: str | None = None) -> bool:
+    """May this call write to *this* instance?
+
+    Both gates must agree: the process-wide ``IPS_ENABLE_WRITE`` **and** the
+    per-instance ``enable_write`` from the instances YAML. An instance that says
+    nothing inherits the global flag — that keeps every existing single-instance
+    setup working unchanged.
+
+    ⚠️ **The point is the asymmetry.** Adding ``enable_write: true`` to an instance
+    can never grant writes on its own; the global flag stays the master switch.
+    But ``enable_write: false`` on an instance **can take them away**, even with the
+    global flag on. That is what lets you open writes for a migration target while
+    the lived-in house stays read-only — the case the README recommended and the
+    code did not support (security review 2026-08-15).
+    """
+    if not _global_write_enabled():
+        return False
+    per_instance = instance_write_enabled(instance)
+    return True if per_instance is None else per_instance
 
 
 def _client(instance: str | None = None) -> IPSClient:
@@ -225,6 +246,15 @@ class GetObjectTreeInput(_Base):
 class ExportSubtreeInput(_Base):
     root_id: int = Field(..., description="Root object ID of the subtree to export", ge=0)
     max_depth: int = Field(default=25, description="How many levels deep to export", ge=1, le=50)
+    include_configuration: bool = Field(
+        default=False,
+        description=(
+            "Include each instance's IPS_GetConfiguration block. OFF by default: those blocks "
+            "regularly carry integration credentials (router, cloud and hub passwords/keys). "
+            "Only turn this on for an actual backup/restore, and be aware the values then enter "
+            "the model context."
+        ),
+    )
 
 
 class ImportSubtreeInput(_Base):
@@ -483,7 +513,9 @@ async def ips_get_object_tree(params: GetObjectTreeInput) -> str:
         return _handle_error(e)
 
 
-async def _export_node(client: IPSClient, oid: int, depth: int, max_depth: int) -> dict[str, Any]:
+async def _export_node(
+    client: IPSClient, oid: int, depth: int, max_depth: int, include_configuration: bool = False
+) -> dict[str, Any]:
     """Recursively serialize a node with the type-specific detail needed to recreate it."""
     obj = await client.call("IPS_GetObject", [oid])
     obj = obj if isinstance(obj, dict) else {}
@@ -503,14 +535,24 @@ async def _export_node(client: IPSClient, oid: int, depth: int, max_depth: int) 
         inst = await client.call("IPS_GetInstance", [oid])
         inst = inst if isinstance(inst, dict) else {}
         node["module_id"] = (inst.get("ModuleInfo") or {}).get("ModuleID")
-        node["configuration"] = await client.call("IPS_GetConfiguration", [oid])
+        # ⚠️ Instance configurations regularly hold integration credentials (FritzBox,
+        # Hue, VeSync, cloud keys). Handing them out from a tool marked readOnlyHint
+        # turns "just reading" into credential exfiltration into the model context and
+        # the client logs. Off unless explicitly asked for (security review 2026-08-15).
+        if include_configuration:
+            node["configuration"] = await client.call("IPS_GetConfiguration", [oid])
+        else:
+            node["configuration_omitted"] = "set include_configuration=true to export it"
     elif otype == 6:  # Link
         link = await client.call("IPS_GetLink", [oid])
         link = link if isinstance(link, dict) else {}
         node["target_id"] = link.get("TargetID")
     if depth < max_depth:
         child_ids = await client.call("IPS_GetChildrenIDs", [oid])
-        children = [await _export_node(client, cid, depth + 1, max_depth) for cid in (child_ids or [])]
+        children = [
+            await _export_node(client, cid, depth + 1, max_depth, include_configuration)
+            for cid in (child_ids or [])
+        ]
         if children:
             node["children"] = children
     return node
@@ -531,7 +573,10 @@ async def ips_export_subtree(params: ExportSubtreeInput) -> str:
     of this read-only export. Returns the nested JSON rooted at root_id.
     """
     try:
-        tree = await _export_node(_client(params.instance), params.root_id, 0, params.max_depth)
+        tree = await _export_node(
+            _client(params.instance), params.root_id, 0, params.max_depth,
+            params.include_configuration,
+        )
         return _dumps(tree)
     except Exception as e:  # noqa: BLE001
         return _handle_error(e)
@@ -551,7 +596,7 @@ async def ips_set_value(params: SetValueInput) -> str:
     Note: SetValue writes the variable without triggering its action. To actuate a device
     that has an action attached, prefer ips_request_action. Returns JSON {variable_id, value, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         await _client(params.instance).call("SetValue", [params.variable_id, params.value])
@@ -571,7 +616,7 @@ async def ips_request_action(params: SetValueInput) -> str:
     This is the correct way to control actuators (lights, switches): it runs the variable's
     action handler instead of only writing the value. Returns JSON {variable_id, value, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         await _client(params.instance).call("RequestAction", [params.variable_id, params.value])
@@ -590,7 +635,7 @@ async def ips_run_script(params: RunScriptInput) -> str:
 
     Side effects depend entirely on the script. Returns JSON {script_id, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         await _client(params.instance).call("IPS_RunScript", [params.script_id])
@@ -616,7 +661,7 @@ async def ips_run_script_capture(params: RunScriptCaptureInput) -> str:
     there as $_IPS['key']. Side effects depend entirely on the script.
     Returns JSON {script_id, output, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         output = await _client(params.instance).call("IPS_RunScriptWaitEx", [params.script_id, params.parameters])
@@ -636,7 +681,7 @@ async def ips_set_script_content(params: SetScriptContentInput) -> str:
     This overwrites the script entirely — read the current source first with ips_get_script_content.
     Returns JSON {script_id, bytes_written, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         await _client(params.instance).call("IPS_SetScriptContent", [params.script_id, params.content])
@@ -656,7 +701,7 @@ async def ips_create_script(params: CreateScriptInput) -> str:
     Performs IPS_CreateScript(0) → IPS_SetParent → IPS_SetName → IPS_SetScriptContent.
     Returns JSON {script_id, name, parent_id, ok} with the new script's ID.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         client = _client(params.instance)
@@ -681,7 +726,7 @@ async def ips_create_category(params: CreateCategoryInput) -> str:
     Performs IPS_CreateCategory → IPS_SetParent → IPS_SetName.
     Returns JSON {category_id, name, parent_id, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         client = _client(params.instance)
@@ -705,7 +750,7 @@ async def ips_create_variable(params: CreateVariableInput) -> str:
     via IPS_SetVariableCustomProfile when 'profile' is given. 'variable_type' is one of
     boolean/integer/float/string. Returns JSON {variable_id, name, parent_id, type, profile, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         client = _client(params.instance)
@@ -735,7 +780,7 @@ async def ips_create_event(params: CreateEventInput) -> str:
     set afterwards via ips_call (e.g. IPS_SetEventCyclic, IPS_SetEventTrigger). Returns JSON
     {event_id, name, parent_id, type, active, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         client = _client(params.instance)
@@ -820,7 +865,7 @@ async def ips_import_subtree(params: ImportSubtreeInput) -> str:
     'skipped' (with their original IDs) so the follow-up can wire them up using the id_map.
     Returns JSON {root_id, id_map, created, skipped, ok}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         client = _client(params.instance)
@@ -845,7 +890,7 @@ async def ips_call(params: CallInput) -> str:
     IPS_CreateEvent, IPS_CreateInstance, IPS_SetEventActive. Params is the positional argument
     list for the function. Returns JSON {method, result}.
     """
-    if not _write_enabled():
+    if not _write_enabled(params.instance):
         return WRITE_DISABLED_MSG
     try:
         result = await _client(params.instance).call(params.method, params.params)
